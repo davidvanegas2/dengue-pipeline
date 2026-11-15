@@ -1,0 +1,42 @@
+# Run before every commit. Install once with: uv run pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=5000"]
+
+  # Use uv-installed versions, matching make lint and CI.
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: sqlfluff
+        name: sqlfluff (SQL)
+        entry: uv run sqlfluff lint
+        language: system
+        types: [sql]
+      - id: marimo-check
+        name: marimo check (notebooks)
+        entry: uv run marimo check
+        language: system
+        files: ^notebooks/.*\.py$
+      - id: student-notebook
+        name: student notebook is up to date
+        entry: uv run python scripts/generate_student_notebook.py --check
+        language: system
+        pass_filenames: false
+        files: ^notebooks/

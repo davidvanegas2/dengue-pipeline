@@ -1,0 +1,20 @@
+{
+  "name": "Dengue data engineering workshop",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install --user uv && uv sync && uv run dengue-pipeline run",
+  "forwardPorts": [2718],
+  "portsAttributes": {
+    "2718": { "label": "marimo", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "marimo-team.vscode-marimo",
+        "ms-python.python",
+        "sqlfluff.vscode-sqlfluff",
+        "editorconfig.editorconfig"
+      ]
+    }
+  }
+}
