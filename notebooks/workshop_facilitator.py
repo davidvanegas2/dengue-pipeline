@@ -32,8 +32,8 @@ with app.setup:
     import polars as pl
 
     # When this notebook runs outside the repository (for example, in molab),
-    # download data from GitHub. Set the URL to your repository copy.
-    REPO_URL = "https://raw.githubusercontent.com/YOUR-USERNAME/taller-ingenieria-datos-dengue/main"
+    # download data from GitHub. Update this URL if you use a fork or another branch.
+    REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"
 
 
 @app.function

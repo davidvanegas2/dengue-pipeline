@@ -12,11 +12,12 @@ preguntas difíciles abiertas para la hackathon (`RETOS.md`).
 - [ ] **Reemplazar la muestra sintética de SIVIGILA** por datos reales
       ([`data/raw/sivigila/LEEME.md`](../data/raw/sivigila/LEEME.md)). Luego
       `make pipeline` y versiona `data/gold/weekly_dengue_signal.parquet`.
-- [ ] **Crear el repositorio en GitHub como privado** (el reto no se puede revelar antes).
-      Hacerlo **público la mañana del taller**.
-- [ ] Cambiar `REPO_URL` al inicio de `notebooks/workshop_facilitator.py` por la URL *raw*
-      del repositorio y correr `make student-notebook`. Agregar al README el badge de
-      molab (generador en <https://molab.marimo.io/github>).
+- [x] Crear el [repositorio en GitHub](https://github.com/davidvanegas2/dengue-pipeline).
+      Actualmente es público y su rama principal es `main`.
+- [x] Configurar `REPO_URL` en `notebooks/workshop_facilitator.py` con
+      `https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main`
+      y regenerar `notebooks/workshop.py` con `make student-notebook`.
+- [ ] Agregar al README el badge de molab (generador en <https://molab.marimo.io/github>).
 - [ ] Probar el notebook en **molab** con una cuenta nueva (con el repo ya público, o
       con un repo de prueba público).
 - [ ] Probar `uv sync && make workshop` en un computador limpio (ojalá Windows).

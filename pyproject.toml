@@ -20,6 +20,11 @@ dependencies = [
 [project.scripts]
 dengue-pipeline = "dengue_pipeline.cli:main"
 
+[project.urls]
+Repository = "https://github.com/davidvanegas2/dengue-pipeline"
+Documentation = "https://github.com/davidvanegas2/dengue-pipeline#readme"
+Issues = "https://github.com/davidvanegas2/dengue-pipeline/issues"
+
 [dependency-groups]
 dev = [
     "epiweeks>=2.3",

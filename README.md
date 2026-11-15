@@ -31,7 +31,8 @@ Elige **una** de estas tres opciones.
 ### Opción A · En el navegador, sin instalar nada (molab)
 
 1. Abre [molab.marimo.io](https://molab.marimo.io) e inicia sesión.
-2. Crea un notebook desde GitHub pegando la URL de `notebooks/workshop.py` de este repositorio.
+2. Crea un notebook desde GitHub pegando esta URL:
+   <https://github.com/davidvanegas2/dengue-pipeline/blob/main/notebooks/workshop.py>.
 3. Ejecuta las celdas. Los datos se descargan solos (ver `REPO_URL` al inicio del notebook).
 
 ### Opción B · En tu computador (recomendada para la hackathon)
@@ -40,10 +41,10 @@ Necesitas [uv](https://docs.astral.sh/uv/getting-started/installation/) (instala
 por ti) y Git.
 
 ```bash
-git clone <URL-de-este-repositorio>
-cd taller-ingenieria-datos-dengue
+git clone https://github.com/davidvanegas2/dengue-pipeline.git
+cd dengue-pipeline
 uv sync                                  # instala todo (1-2 minutos)
-uv run dengue-pipeline run          # corre el pipeline completo, sin internet
+uv run dengue-pipeline run                # corre el pipeline completo, sin internet
 uv run marimo edit notebooks/workshop.py   # abre el taller en el navegador
 ```
 
