@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "charliermarsh.ruff",
+    "marimo-team.vscode-marimo",
+    "ms-python.python",
+    "sqlfluff.vscode-sqlfluff",
+    "editorconfig.editorconfig"
+  ]
+}

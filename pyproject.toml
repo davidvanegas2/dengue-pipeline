@@ -1,0 +1,113 @@
+[project]
+name = "dengue-pipeline"
+version = "0.1.0"
+description = "Data engineering workshop · Loka x WIE ICESI Hackathon 2026: from PDF to an ML-ready table."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "David Vanegas" }]
+keywords = ["dengue", "duckdb", "marimo", "data-engineering", "colombia"]
+dependencies = [
+    "altair>=5.4",
+    "duckdb>=1.4",
+    "fastexcel>=0.12",
+    "marimo>=0.17",
+    "pdfplumber>=0.11",
+    "polars>=1.30",
+    "pyarrow>=18",
+]
+
+[project.scripts]
+dengue-pipeline = "dengue_pipeline.cli:main"
+
+[dependency-groups]
+dev = [
+    "epiweeks>=2.3",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "sqlfluff>=3.2",
+    "xlsxwriter>=3.2",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dengue_pipeline"]
+
+# ---------------------------------------------------------------------------
+# Ruff: linter + formatter (replaces black, isort and flake8)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "B",   # bugbear (common mistakes)
+    "UP",  # pyupgrade (modern syntax)
+    "SIM", # simplifications
+    "C4",  # comprehensions
+    "PTH", # use pathlib
+    "PIE",
+    "PT",  # pytest style
+    "N",   # PEP 8 names
+    "RUF",
+]
+ignore = [
+    "RUF001", # Spanish teaching text and source values include ambiguous Unicode characters
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# marimo displays the last cell expression; it is not unused.
+# Cells are functions, so uppercase constants inside them are expected.
+"notebooks/*.py" = ["B018", "N803", "N806", "PTH", "E501"]
+"tests/*.py" = ["PLR2004"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# mypy: static package type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unreachable = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["pdfplumber.*", "pdfminer.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "network: requires internet access (datos.gov.co); skip with -m 'not network'.",
+    "slow: takes more than a few seconds (notebooks or full pipeline).",
+]
+
+[tool.coverage.run]
+source = ["dengue_pipeline"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

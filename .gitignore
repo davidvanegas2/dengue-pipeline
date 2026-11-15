@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# marimo (local sessions and exports)
+__marimo__/
+notebooks/__marimo__/
+
+# Regenerable warehouse and outputs created by `make pipeline`
+data/dengue.duckdb
+data/dengue.duckdb.wal
+data/gold/*.csv
+!data/gold/.gitkeep
+
+# Large national SIVIGILA downloads: only the pilot file is versioned
+data/raw/sivigila/descargas/
+
+# Operating systems / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
