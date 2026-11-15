@@ -1,0 +1,7 @@
+# Keep code and documentation consistent across platforms.
+* text=auto eol=lf
+
+# Preserve source CSV bytes, including the generator's CRLF record separators.
+*.csv -text whitespace=cr-at-eol
+*.pdf binary
+*.parquet binary
