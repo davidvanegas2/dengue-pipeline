@@ -1,0 +1,2 @@
+SINTETICO
+Muestra generada por scripts/generate_sivigila_sample.py. NO son datos reales.
