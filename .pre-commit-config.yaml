@@ -10,6 +10,9 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=5000"]
+        # The pilot SIVIGILA file (about 13 MB of real microdata) is versioned on purpose:
+        # the notebook downloads it from GitHub. Every other file keeps the 5 MB limit.
+        exclude: ^data/raw/sivigila/sivigila_dengue_piloto\.csv$
 
   # Use uv-installed versions, matching make lint and CI.
   - repo: local
