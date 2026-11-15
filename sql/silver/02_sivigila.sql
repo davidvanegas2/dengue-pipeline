@@ -11,12 +11,8 @@ SELECT
     trim(tip_cas) AS case_type,
     trim(pac_hos) AS hospitalization,
     trim(con_fin) AS final_condition,
-    coalesce(
-        try_cast(fec_not AS DATE), cast(try_strptime(fec_not, '%d/%m/%Y') AS DATE)
-    ) AS notification_date,
-    coalesce(
-        try_cast(ini_sin AS DATE), cast(try_strptime(ini_sin, '%d/%m/%Y') AS DATE)
-    ) AS symptom_onset_date
+    parse_date_text(fec_not) AS notification_date,
+    parse_date_text(ini_sin) AS symptom_onset_date
 FROM bronze.sivigila;
 
 -- Pilot assumptions to revisit in RETOS.md #3:
