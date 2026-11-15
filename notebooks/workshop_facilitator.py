@@ -526,7 +526,7 @@ def _(con, path):
     )
     bronze_sivigila = con.sql(
         """
-        SELECT cod_dpto_o, cod_mun_o, municipio_ocurrencia, ano, semana, cod_eve, ajuste
+        SELECT municipio_ocurrencia, cod_dpto_o, cod_mun_o, fec_not, ini_sin, ano, semana, cod_eve
         FROM bronze.sivigila
         WHERE municipio_ocurrencia IN ('BARRANQUILLA', 'SANTIAGO DE CALI', 'PALMIRA')
         LIMIT 6
@@ -539,12 +539,20 @@ def _(con, path):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    🔍 **Trampa 2: los ceros a la izquierda.** En DIVIPOLA (el código oficial del DANE)
-    Barranquilla es `08001` y Cali es `76001`. SIVIGILA guarda los códigos **como
-    números**: Atlántico es `8` y Barranquilla `1`.
+    🔍 **Trampa 2: fechas que parecen fechas.** SIVIGILA guarda la fecha de notificación
+    (`fec_not`) como **texto**, tal como la escribe Excel en español:
+    `2/12/2024 12:00:00 a. m.`. Mira la tabla de arriba: ¿`2/12/2024` es el 2 de
+    diciembre o el 12 de febrero? Compárala con `ini_sin` en la misma fila
+    (`28/11/2024`): no existe el mes 28, así que el formato es **día/mes/año**.
 
-    ### ✏️ TODO 3 · Construye el código DIVIPOLA de 5 dígitos
-    2 dígitos del departamento + 3 del municipio. Pista: la función `lpad` de SQL.
+    Si le pides a SQL un `CAST(fec_not AS DATE)`, no falla: devuelve `NULL`, en silencio.
+    (Los códigos de municipio sí vienen completos, `08` y `001`, pero se pierden si
+    alguien guarda el archivo desde Excel; por eso el código de abajo los rellena con
+    `lpad` por seguridad.)
+
+    ### ✏️ TODO 3 · Convierte `fec_not` en una fecha
+    La fecha es lo que está **antes del primer espacio**. Pistas: `split_part(texto, ' ', 1)`
+    para quedarte con esa parte y `try_strptime(texto, '%d/%m/%Y')` para leerla.
     """)
     return
 
@@ -557,11 +565,14 @@ def _(bronze_sivigila, con):
         CREATE OR REPLACE TABLE silver.cases AS
         SELECT
             cod_dpto_o AS original_department_code,
-            -- >>> SOLUTION
+            -- The INS files already include leading zeros ('08', '001'). lpad is a safeguard
+            -- for exports that lose them, for example after saving the file from Excel.
             lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,
+            -- >>> SOLUTION
+            CAST(try_strptime(split_part(fec_not, ' ', 1), '%d/%m/%Y') AS DATE) AS notification_date,
             -- <<< SOLUTION
             -- >>> STUDENT
-            -- cod_dpto_o || cod_mun_o AS municipality_code,  -- ✏️ TODO 3: this does not work yet. Why?
+            -- try_cast(fec_not AS DATE) AS notification_date,  -- ✏️ TODO 3: every date is NULL. Why?
             -- <<< STUDENT
             CAST(ano AS INTEGER) AS epi_year,
             CAST(semana AS INTEGER) AS epi_week,
@@ -576,7 +587,9 @@ def _(bronze_sivigila, con):
             c.original_department_code,
             count(*) AS cases,
             count(d.cod_mpio) AS with_valid_municipality,
-            round(100 * count(d.cod_mpio) / count(*), 1) AS matched_pct
+            round(100 * count(d.cod_mpio) / count(*), 1) AS matched_pct,
+            count(c.notification_date) AS with_valid_date,
+            round(100 * count(c.notification_date) / count(*), 1) AS date_pct
         FROM silver.cases AS c
         LEFT JOIN bronze.divipola AS d ON c.municipality_code = d.cod_mpio
         GROUP BY ALL ORDER BY 1
@@ -588,13 +601,15 @@ def _(bronze_sivigila, con):
 
 @app.cell(hide_code=True)
 def _(cases_by_department):
-    checkpoint_2 = bool(cases_by_department["matched_pct"].min() == 100)
+    checkpoint_2 = bool(
+        min(cases_by_department["matched_pct"].min(), cases_by_department["date_pct"].min()) == 100
+    )
     mo.callout(
         mo.md(
-            "✅ **Checkpoint 2:** el 100 % de los casos encontró su municipio en DIVIPOLA."
+            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
             if checkpoint_2
-            else "❌ **Checkpoint 2:** hay casos sin municipio. ¿Dónde quedaron Cali y "
-            "Atlántico? Revisa el TODO 3."
+            else "❌ **Checkpoint 2:** hay fechas vacías (`NULL`). ¿Qué hace `CAST` con un "
+            "texto como `2/12/2024 12:00:00 a. m.`? Revisa el TODO 3."
         ),
         kind="success" if checkpoint_2 else "danger",
     )
@@ -618,7 +633,8 @@ def _(checkpoint_2, con, path):
         LEFT JOIN bronze.entities AS dep ON d.cod_dpto = dep.cod_dpto AND dep.tipo = 'departamento';
 
         -- Pilot assumptions (see RETOS.md): dengue (210) and severe dengue (220),
-        -- excluding discarded cases (6) and data-entry errors (D).
+        -- excluding discarded cases (6) and data-entry errors (D). The real INS downloads
+        -- contain neither (adjustment is 0, 3, 5 or 7); keep the filter as a safeguard.
         CREATE OR REPLACE TABLE silver.weekly_cases AS
         SELECT me.territorial_entity, c.epi_year, c.epi_week, count(*) AS cases
         FROM silver.cases AS c
@@ -1190,7 +1206,7 @@ def _(checkpoint_1, checkpoint_2, checkpoint_3, todo1_ok):
     _status = [
         {"step": "TODO 1 · números colombianos", "ok": todo1_ok},
         {"step": "Checkpoint 1 · el PDF cuadra (TODO 2)", "ok": checkpoint_1},
-        {"step": "Checkpoint 2 · códigos DIVIPOLA (TODO 3)", "ok": checkpoint_2},
+        {"step": "Checkpoint 2 · fechas de notificación (TODO 3)", "ok": checkpoint_2},
         {"step": "Checkpoint 3 · tabla oro (TODO 4)", "ok": checkpoint_3},
     ]
     mo.md(

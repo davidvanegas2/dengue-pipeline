@@ -38,8 +38,9 @@ SOLUTIONS: dict[str, list[tuple[str, str]]] = {
     "todo2": [("return page.crop(_bbox)", "return page.within_bbox(_bbox)")],
     "todo3": [
         (
-            "cod_dpto_o || cod_mun_o AS municipality_code,",
-            "lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,",
+            "try_cast(fec_not AS DATE) AS notification_date,",
+            "CAST(try_strptime(split_part(fec_not, ' ', 1), '%d/%m/%Y') AS DATE)"
+            " AS notification_date,",
         )
     ],
     "todo4": [
@@ -100,11 +101,10 @@ def test_initial_student_notebook_waits_for_todos(
     assert definitions["checkpoint_1"] is False
     assert definitions["checkpoint_2"] is False
     assert "checkpoint_3" not in definitions
-    # Leading-zero trap: all Atlántico cases fail to match.
-    atlantico = definitions["cases_by_department"].filter(
-        definitions["cases_by_department"]["original_department_code"] == "8"
-    )
-    assert atlantico["matched_pct"][0] == 0
+    # Date trap: municipalities match, but try_cast leaves every date empty, silently.
+    by_department = definitions["cases_by_department"]
+    assert by_department["matched_pct"].to_list() == [100.0] * by_department.height
+    assert by_department["date_pct"].to_list() == [0.0] * by_department.height
 
 
 def test_todo1_reveals_cropping_trap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,4 +167,6 @@ def test_student_notebook_has_no_solutions() -> None:
     assert "SOLUTION" not in student
     assert "STUDENT" not in student
     assert "within_bbox" not in student.split("💡 Ayuda para el TODO 2")[0]
-    assert "lpad(cod_dpto_o, 2, '0')" not in student
+    facilitator = (ROOT / "notebooks" / "workshop_facilitator.py").read_text(encoding="utf-8")
+    assert "try_strptime(split_part(fec_not" in facilitator  # the check below is not vacuous
+    assert "try_strptime(split_part(fec_not" not in student
