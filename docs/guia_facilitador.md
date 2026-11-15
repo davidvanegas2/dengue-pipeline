@@ -9,9 +9,10 @@ preguntas difíciles abiertas para la hackathon (`RETOS.md`).
 
 ## Antes del 4 de diciembre
 
-- [ ] **Reemplazar la muestra sintética de SIVIGILA** por datos reales
-      ([`data/raw/sivigila/LEEME.md`](../data/raw/sivigila/LEEME.md)). Luego
-      `make pipeline` y versiona `data/gold/weekly_dengue_signal.parquet`.
+- [x] **Reemplazar la muestra sintética de SIVIGILA** por datos reales
+      ([`data/raw/sivigila/LEEME.md`](../data/raw/sivigila/LEEME.md)): dengue (210) y
+      dengue grave (220), años 2024 y 2025. Luego `make pipeline` y versiona
+      `data/gold/weekly_dengue_signal.parquet`.
 - [x] Crear el [repositorio en GitHub](https://github.com/davidvanegas2/dengue-pipeline).
       Actualmente es público y su rama principal es `main`.
 - [x] Configurar `REPO_URL` en `notebooks/workshop_facilitator.py` con
@@ -20,7 +21,8 @@ preguntas difíciles abiertas para la hackathon (`RETOS.md`).
 - [ ] Agregar al README el badge de molab (generador en <https://molab.marimo.io/github>).
 - [ ] Probar el notebook en **molab** con una cuenta nueva (con el repo ya público, o
       con un repo de prueba público).
-- [ ] Probar `uv sync && make workshop` en un computador limpio (ojalá Windows).
+- [ ] Probar `uv sync && uv run marimo edit notebooks/workshop.py` en un computador limpio
+      (ojalá Windows, donde `make` no viene instalado).
 - [ ] **Coordinar con el taller de ML:** que use `data/gold/weekly_dengue_signal.parquet`
       como entrada; acordar columnas (`docs/diccionario_de_datos.md`).
 - [ ] **Pedir a la organización:** wifi para ~40 portátiles, proyector, que las
@@ -49,7 +51,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 | 12-16 | **TODO 1** | Dales 3 minutos. Las pruebas se ponen en verde solas | Escriben `parse_integer` y `parse_decimal` |
 | 16-22 | **Checkpoint 1 → TODO 2** | Sale en **rojo**: faltan 733 casos. Lee con ellas las líneas rotas (`Putumayo … 66 e`). ¿De dónde salió la "e"? Abre la ayuda. Cambien `crop` por `within_bbox` | Encuentran el error y lo arreglan |
 | 22-24 | Carga a bronce | *"Validar contra el total del propio documento es la mejor prueba que existe"* | — |
-| 24-30 | **4 · SIVIGILA → TODO 3** | Muestra la tabla en rojo: Atlántico 0 %, el Valle a medias. ¿Por qué Palmira sí y Cali no? (`520` vs `1`) | Escriben el `lpad` |
+| 24-30 | **4 · SIVIGILA → TODO 3** | Muestra la tabla en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` no falla: devuelve `NULL` en silencio | Escriben `split_part` + `try_strptime` |
 | 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
 | 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
 | 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
@@ -62,19 +64,24 @@ Trabajan en **parejas**: una escribe, la otra guía.
 * Boletín semana 26: Tabla 17, página 3 del extracto (28 del original), **56 797** casos.
   Semana 27: Tabla 23, **59 262**.
 * Con `crop()`: 35 filas y faltan **733** casos (Putumayo 318 + Quindío 195 + Caldas 110 + Risaralda 110).
-* TODO 3 sin arreglar: Atlántico **0 %**, Valle **49,2 %** emparejado (con la muestra sintética).
+* TODO 3 sin arreglar: **0 %** de las fechas de notificación convertidas (los 112 908 casos
+  quedan con `NULL`); los municipios sí emparejan al 100 %.
 * Sin alias: 5 estaciones de Cali y 1 de Buga sin municipio.
-* Explosión de filas (muestra sintética): `weekly_cases` tiene **500** filas; el cruce con
-  la lluvia diaria da **8 212** filas y **117 168** casos en vez de **8 239**.
+* Explosión de filas: `weekly_cases` tiene **520** filas; con el interruptor de alias activado
+  (como queda después del minuto 37) el cruce con la lluvia diaria da **10 354** filas y
+  **1 118 315** casos en vez de **112 908**. Con el interruptor apagado: 8 350 filas y
+  904 024 casos.
 * El pasado cambia: 56 797 + 2 847 notificados ≠ 59 262. Faltan **382**. Putumayo baja de 318 a 309.
 * Lluvia imposible: **825,8 mm** en Juan de Acosta (2026-05-10).
 
-> Con datos reales de SIVIGILA cambian los números de casos (no los del boletín ni los
-> del IDEAM). Revísalos después de reemplazar la muestra.
+> Los casos de SIVIGILA son microdatos reales del INS (2024-2025, eventos 210 y 220). Si
+> cambias el archivo, cambian los números de casos (no los del boletín ni los del IDEAM):
+> revísalos.
 
 ### Versión corta (si vas atrasado)
 
 * Haz tú el TODO 1 en vivo (30 segundos) y deja que ellas hagan solo el TODO 2.
+* Si el TODO 3 se alarga, escribe tú el `try_strptime` y explica qué hace cada parte.
 * Salta la tabla de semana ISO vs epidemiológica: menciónala y sigue.
 * En "Lo que no cuadra" muestra solo la incógnita 1 y manda a `RETOS.md`.
 

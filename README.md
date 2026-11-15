@@ -21,7 +21,7 @@ epidemiológica) lista para gráficas y modelos.
 * Pedirle a una API que agregue los datos por ti en vez de descargar millones de filas.
 * Cargar todo en una base de datos analítica (**DuckDB**) y transformarlo con **SQL**.
 * Organizar el trabajo en capas **bronce → plata → oro**.
-* Cazar las trampas reales de los datos públicos colombianos: ceros a la izquierda,
+* Cazar las trampas reales de los datos públicos colombianos: fechas guardadas como texto,
   nombres que no coinciden, semanas epidemiológicas, distritos que se reportan aparte…
 
 ## ⚡ Inicio rápido
@@ -129,15 +129,15 @@ en [`docs/arquitectura.md`](docs/arquitectura.md).
 | Fuente | Qué trae | Formato | En este repo |
 |---|---|---|---|
 | Boletín Epidemiológico Semanal (INS) | Casos acumulados por entidad territorial, año en curso | PDF | Extractos de las semanas 26 y 27 de 2026 |
-| SIVIGILA (INS) | Un registro por caso, años cerrados desde 2007 | Excel / CSV | ⚠️ **Muestra sintética** con el formato real |
+| SIVIGILA (INS) | Un registro por caso, años cerrados desde 2007 | Excel / CSV | Microdatos reales 2024-2025 (dengue y dengue grave), Valle y Atlántico |
 | IDEAM (datos.gov.co) | Lluvia por estación cada 10 minutos | API Socrata | Suma diaria 2024-2026, Valle y Atlántico |
 | DIVIPOLA (DANE) | Códigos oficiales de municipios | API Socrata | Valle y Atlántico |
 
 Detalles, enlaces y trampas conocidas: [`docs/fuentes.md`](docs/fuentes.md).
 
-> ⚠️ **SIVIGILA:** los microdatos se descargan a mano desde el portal del INS. Mientras no
-> se reemplacen, el repositorio usa una muestra **sintética** con el mismo formato
-> (`data/raw/sivigila/ORIGEN.txt` dice cuál está en uso). Cómo cambiarla:
+> **SIVIGILA:** los microdatos se descargan a mano desde el portal del INS. El repositorio
+> trae los de 2024-2025 para el piloto; `data/raw/sivigila/ORIGEN.txt` dice si son reales
+> (`INS`) o una muestra con números inventados (`SINTETICO`). Cómo cambiarlos:
 > [`data/raw/sivigila/LEEME.md`](data/raw/sivigila/LEEME.md).
 
 ## Calidad del código

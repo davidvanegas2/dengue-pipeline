@@ -31,8 +31,11 @@ del repositorio y las trampas que **ya encontramos** (con evidencia).
 * **Qué es:** un registro por caso notificado, desde 2007. **Solo años cerrados.**
 * **Dónde:** portal SIVIGILA → *Buscador de microdatos* (<https://portalsivigila.ins.gov.co/>).
   Se descarga a mano por evento y año. Pasos: [`data/raw/sivigila/LEEME.md`](../data/raw/sivigila/LEEME.md).
-* **En el repo:** ⚠️ `data/raw/sivigila/sivigila_dengue_piloto.csv` es una **muestra
-  sintética** con el formato real (ver `ORIGEN.txt`). Reemplázala antes de analizar.
+* **En el repo:** `data/raw/sivigila/sivigila_dengue_piloto.csv`: microdatos **reales** del
+  INS para Valle del Cauca y Atlántico, dengue (210) y dengue grave (220), años 2024 y 2025
+  (112 908 casos). Se prepararon con `dengue-pipeline prepare-sivigila` a partir de 4
+  archivos nacionales (`Datos_AAAA_EEE.xlsx`). `ORIGEN.txt` dice `INS`; si dijera
+  `SINTETICO`, serían números inventados.
 * **Columnas que usa el piloto** (el archivo real trae unas 74):
 
 | Columna | Significado |
@@ -47,9 +50,9 @@ del repositorio y las trampas que **ya encontramos** (con evidencia).
 
 | Trampa | Evidencia |
 |---|---|
-| Códigos guardados como número | Atlántico = `8`, Barranquilla = `1`. Concatenar sin rellenar con ceros pierde el 100 % de Atlántico y a Cali |
-| Excel puede convertirlos en decimales | `8.0` → por eso la macro `dane_code()` limpia antes de rellenar |
-| Hay casos descartados en el archivo | `ajuste` = 6 o D: hay que filtrarlos |
+| Fechas guardadas como texto en español | `2/12/2024 12:00:00 a. m.` (día/mes/año). `CAST(... AS DATE)` devuelve `NULL` sin avisar; la macro `parse_date_text()` las convierte |
+| Los códigos pueden perder los ceros | Las descargas del INS traen `08` y `001`, pero Excel puede quitarlos o convertirlos en decimales (`8.0`): la macro `dane_code()` limpia y rellena |
+| Casos descartados | Las descargas de 2024 y 2025 traen `ajuste` 0, 3, 5 y 7 (ninguno 6 ni D); el piloto filtra 6 y D por seguridad |
 
 Referencia útil: el paquete de R [`sivirep`](https://github.com/epiverse-trace/sivirep)
 documenta las columnas de los microdatos.
