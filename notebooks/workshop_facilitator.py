@@ -349,14 +349,15 @@ def _():
     El mapa reúne **las seis tablas de bronce, las seis de plata y la tabla oro**.
     DIVIPOLA, alias y entidades también son bronce: son referencias que permiten
     relacionar las tres fuentes. Las flechas muestran todas las entradas entre tablas,
-    incluidas las que definen el calendario y las señales de calidad de oro.
+    incluidas las que definen el calendario, la cobertura y las señales de calidad de oro.
     El boletín llega directamente a oro aquí; el paquete completo también lo
     prepara en una tabla plata.
 
     Para seguir un cruce, elige una tabla en **Seguir conexiones de**. Sus entradas
     se ven en **azul** y sus salidas en **verde**; las demás conexiones se atenúan.
     En **Todas las tablas**, pasa el cursor o usa Tab para explorar del mismo modo.
-    Oro identifica qué aporta cada entrada: medidas, calendario o señales de calidad.
+    Oro identifica qué aporta cada entrada: medidas, calendario, cobertura o señales de
+    calidad. La cobertura de SIVIGILA decide si una semana sin casos vale 0 o queda vacía.
 
     **Pulsa una tabla para abrir su ficha aquí mismo:** qué representa una fila,
     de dónde viene, cómo se construye, para qué sirve y una muestra si ya se creó.
@@ -1107,12 +1108,11 @@ def _(cases_by_department, con, date_format_error):
 
 
 @app.cell(hide_code=True)
-def _(checkpoint_2, con, path, set_flow):
+def _(bronze_sivigila, con, path, set_flow):
+    # The territorial references do not need the dates, so they load before TODO 1.
+    # bronze_sivigila also signals that the shared DIVIPOLA reference is available.
     publish_flow(set_flow, {}, invalidate=("bronze.entities",))
-    mo.stop(
-        not checkpoint_2,
-        mo.md("⏳ *Completa el TODO 1; tienes una solución para continuar en su ayuda.*"),
-    )
+    mo.stop(bronze_sivigila is None)
     con.execute(
         "CREATE OR REPLACE TABLE bronze.entities AS SELECT * FROM read_csv(?, all_varchar = true)",
         [str(path("entities"))],
@@ -1124,8 +1124,26 @@ def _(checkpoint_2, con, path, set_flow):
         SELECT d.cod_mpio AS municipality_code, coalesce(dist.entidad_territorial, dep.entidad_territorial) AS territorial_entity
         FROM bronze.divipola AS d
         LEFT JOIN bronze.entities AS dist ON d.cod_mpio = dist.cod_mpio
-        LEFT JOIN bronze.entities AS dep ON d.cod_dpto = dep.cod_dpto AND dep.tipo = 'departamento';
+        LEFT JOIN bronze.entities AS dep ON d.cod_dpto = dep.cod_dpto AND dep.tipo = 'departamento'
+        """
+    )
+    entity_reports = {
+        table: table_snapshot(con, table)
+        for table in ("bronze.entities", "silver.municipality_entity")
+    }
+    publish_flow(set_flow, entity_reports)
+    return (entity_reports,)
 
+
+@app.cell(hide_code=True)
+def _(checkpoint_2, con, entity_reports, set_flow):
+    publish_flow(set_flow, {}, invalidate=("silver.weekly_cases",))
+    mo.stop(
+        not checkpoint_2,
+        mo.md("⏳ *Completa el TODO 1; tienes una solución para continuar en su ayuda.*"),
+    )
+    con.execute(
+        """
         -- Pilot assumptions (see RETOS.md): dengue (210) and severe dengue (220),
         -- excluding discarded cases (6) and data-entry errors (D). The real INS downloads
         -- contain neither (adjustment is 0, 3, 5 or 7); keep the filter as a safeguard.
@@ -1148,14 +1166,11 @@ def _(checkpoint_2, con, path, set_flow):
         ON epi_year USING sum(cases) ORDER BY territorial_entity
         """
     ).pl()
-    _reports = {
-        table: table_snapshot(con, table)
-        for table in ("bronze.entities", "silver.municipality_entity", "silver.weekly_cases")
-    }
-    publish_flow(set_flow, _reports)
+    _report = table_snapshot(con, "silver.weekly_cases")
+    publish_flow(set_flow, {"silver.weekly_cases": _report})
     mo.vstack(
         [
-            table_card("silver.weekly_cases", _reports["silver.weekly_cases"]),
+            table_card("silver.weekly_cases", _report),
             mo.md(
                 "**Cambio de unidad:** casos individuales → entidad × semana. "
                 "El número de filas baja porque agrupamos; la columna `cases` conserva el conteo. "
@@ -1166,12 +1181,12 @@ def _(checkpoint_2, con, path, set_flow):
                 {
                     "Cómo se asigna cada municipio a una entidad": table_card(
                         "silver.municipality_entity",
-                        _reports["silver.municipality_entity"],
+                        entity_reports["silver.municipality_entity"],
                         preview=True,
                     ),
                     "Referencia cargada: entidades del piloto": table_card(
                         "bronze.entities",
-                        _reports["bronze.entities"],
+                        entity_reports["bronze.entities"],
                         preview=True,
                     ),
                 }
@@ -1435,9 +1450,10 @@ def _(con, macros_ready):
 
 
 @app.cell(hide_code=True)
-def _(weekly_cases_summary, con, missing_municipalities, set_flow):
+def _(con, entity_reports, missing_municipalities, set_flow):
+    # Like the map, this waits only for its inputs: the rainfall route does not need TODO 1.
     publish_flow(set_flow, {}, invalidate=("silver.entity_daily_rainfall",))
-    mo.stop(weekly_cases_summary is None or missing_municipalities is None)
+    mo.stop(missing_municipalities is None or "silver.municipality_entity" not in entity_reports)
     con.execute(
         """
         CREATE OR REPLACE TABLE silver.entity_daily_rainfall AS
@@ -1448,11 +1464,17 @@ def _(weekly_cases_summary, con, missing_municipalities, set_flow):
     )
     entity_rainfall_ready = True
     _before = con.sql("SELECT count(*) FROM silver.daily_rainfall").fetchall()[0][0]
+    _unmatched = ", ".join(
+        f"`{_name}`" for _name in missing_municipalities["municipality"].unique(maintain_order=True)
+    )
     _report = table_snapshot(
         con,
         "silver.entity_daily_rainfall",
         "created" if missing_municipalities.is_empty() else "warning",
-        "Se conserva el detalle diario de las estaciones que encuentran entidad.",
+        "Se conserva el detalle diario de las estaciones que encuentran entidad."
+        if missing_municipalities.is_empty()
+        else f"{missing_municipalities['stations'].sum():,} estaciones sin municipio ({_unmatched}) "
+        "no encuentran entidad y quedan fuera de esta tabla. Activa los alias en la sección 5.",
     )
     publish_flow(set_flow, {"silver.entity_daily_rainfall": _report})
     mo.vstack(
@@ -1469,8 +1491,8 @@ def _(weekly_cases_summary, con, missing_municipalities, set_flow):
 
 
 @app.cell(hide_code=True)
-def _(con, entity_rainfall_ready):
-    mo.stop(not entity_rainfall_ready)
+def _(con, entity_rainfall_ready, weekly_cases_summary):
+    mo.stop(not entity_rainfall_ready or weekly_cases_summary is None)
     prediction = mo.ui.number(
         start=0, stop=10_000_000, step=1, value=0, label="Mi predicción (filas)"
     )
@@ -1539,12 +1561,9 @@ def _():
 
 
 @app.cell
-def _(con, entity_rainfall_ready, set_flow):
-    publish_flow(set_flow, {}, invalidate=("silver.weekly_rainfall",))
-    mo.stop(not entity_rainfall_ready)
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE silver.weekly_rainfall AS
+def _():
+    # The next cell saves the result of this query as silver.weekly_rainfall.
+    weekly_rainfall_query = """
         WITH per_station AS (
             -- First, total weekly rainfall for each station...
             SELECT territorial_entity, station_code,
@@ -1564,19 +1583,47 @@ def _(con, entity_rainfall_ready, set_flow):
                count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
-        """
-    ).fetchall()
-    weekly_rainfall_ready = True
-    publish_flow(
-        set_flow,
-        {
-            "silver.weekly_rainfall": table_snapshot(
-                con,
-                "silver.weekly_rainfall",
-                detail="Tabla creada. La comparación por entidad y semana comprobará el cálculo más abajo.",
-            )
-        },
-    )
+    """
+    return (weekly_rainfall_query,)
+
+
+@app.cell(hide_code=True)
+def _(con, entity_rainfall_ready, set_flow, weekly_rainfall_query):
+    # Keep the map bookkeeping out of the editable cell: participants only touch the SQL.
+    publish_flow(set_flow, {}, invalidate=("silver.weekly_rainfall",))
+    mo.stop(not entity_rainfall_ready)
+    try:
+        con.execute(
+            f"CREATE OR REPLACE TABLE silver.weekly_rainfall AS {weekly_rainfall_query}"
+        ).fetchall()
+    except duckdb.Error as _error:
+        # Like TODO 1, turn a broken query into a hint instead of a traceback.
+        weekly_rainfall_ready = False
+        _message = (
+            "❌ **TODO 2 pendiente:** DuckDB no pudo ejecutar tu consulta. Revisa el último "
+            "cambio; la ayuda incluye una solución para continuar.\n\n"
+            f"Detalle de DuckDB: `{str(_error).splitlines()[0]}`"
+        )
+        _detail = "La consulta del TODO 2 no se ejecutó; lee el mensaje de DuckDB de arriba."
+        publish_flow(
+            set_flow,
+            {"silver.weekly_rainfall": {"status": "error", "rows": None, "detail": _detail}},
+        )
+        _output = mo.callout(mo.md(_message), kind="danger")
+    else:
+        weekly_rainfall_ready = True
+        publish_flow(
+            set_flow,
+            {
+                "silver.weekly_rainfall": table_snapshot(
+                    con,
+                    "silver.weekly_rainfall",
+                    detail="Tabla creada. La comparación por entidad y semana comprobará el cálculo más abajo.",
+                )
+            },
+        )
+        _output = None
+    _output
     return (weekly_rainfall_ready,)
 
 
@@ -1589,7 +1636,9 @@ def _(get_flow):
 @app.cell(hide_code=True)
 def _(con, weekly_rainfall_ready):
     mo.stop(not weekly_rainfall_ready)
-    # Reproduce the prepared CTE for inspection only; it is not another stored table.
+    # A CTE cannot be read outside its query, so this repeats the template's first step.
+    # The panel flags a result that these station totals cannot explain, for example after
+    # a participant edits per_station instead of the final SELECT.
     _stations = con.sql(
         """
         SELECT territorial_entity, station_code,
@@ -1610,9 +1659,38 @@ def _(con, weekly_rainfall_ready):
     )
     station_week_example = _stations.filter(_selection).sort("station_code")
     rainfall_week_example = con.sql("SELECT * FROM silver.weekly_rainfall").pl().filter(_selection)
+    _totals = station_week_example["mm"].cast(pl.Float64)
+    _results = rainfall_week_example["mean_precipitation_mm"].cast(pl.Float64)
+    _value = _results[0] if _results.len() == 1 else None
+    # Any usual combination of these totals means the query started from them.
+    _candidates = (
+        _totals.sum(),
+        _totals.mean(),
+        _totals.median(),
+        _totals.min(),
+        _totals.max(),
+        _totals.len(),
+    )
+    per_station_mismatch = _value is not None and all(
+        _candidate is None or abs(_value - _candidate) > 0.01 for _candidate in _candidates
+    )
+    _mismatch_note = (
+        mo.callout(
+            mo.md(
+                f"⚠️ **Tu resultado ({_value:,.2f} mm) no sale de combinar estos totales.** "
+                "Esta tabla repite el primer paso de la plantilla, `sum(precipitation_mm)`. "
+                "Si cambiaste `per_station`, tu consulta partió de otros valores: restaura "
+                "esa suma y edita solo el SELECT final."
+            ),
+            kind="warn",
+        )
+        if per_station_mismatch
+        else None
+    )
     mo.accordion(
         {
-            "Seguir una semana real: de estaciones a entidad": mo.vstack(
+            "Seguir una semana real: de estaciones a entidad"
+            + (" · ⚠️ revisa el primer paso" if per_station_mismatch else ""): mo.vstack(
                 [
                     mo.md(
                         f"**{_entity}, {_year}, semana {_week}.** Estas son todas las estaciones "
@@ -1625,8 +1703,9 @@ def _(con, weekly_rainfall_ready):
                   style P stroke-dasharray: 5 4
             """),
                     mo.md(
-                        "**Paso intermedio: `per_station`.** Es una CTE: existe dentro de la consulta, "
-                        "no es una tabla guardada. Cada valor es el total semanal de una estación."
+                        "**Paso intermedio: `per_station`.** Es una CTE: existe solo dentro de la "
+                        "consulta, así que aquí repetimos el primer paso de la plantilla, "
+                        "`sum(precipitation_mm)`. Cada valor es el total semanal de una estación."
                     ),
                     mo.ui.table(station_week_example, selection=None),
                     mo.md(
@@ -1634,11 +1713,12 @@ def _(con, weekly_rainfall_ready):
                         "aunque la cifra todavía necesite corregirse."
                     ),
                     mo.ui.table(rainfall_week_example, selection=None),
+                    *([_mismatch_note] if _mismatch_note is not None else []),
                 ]
             ),
         }
     )
-    return rainfall_week_example, station_week_example
+    return per_station_mismatch, rainfall_week_example, station_week_example
 
 
 @app.cell(hide_code=True)
@@ -1667,9 +1747,24 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(bronze_bulletin, con, set_flow, weekly_rainfall_ready):
+def _(checkpoint_2):
+    # The rainfall route runs before TODO 1; integration and the TODO 2 check need the cases.
+    mo.stop(checkpoint_2)
+    mo.callout(
+        mo.md(
+            "⏳ **La integración espera el TODO 1.** `gold.signal` necesita los casos semanales "
+            "y la comprobación del TODO 2 usa esa tabla. Puedes preparar el TODO 2; su "
+            "comprobación aparecerá cuando completes el TODO 1 (su ayuda tiene una solución)."
+        ),
+        kind="info",
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(bronze_bulletin, con, set_flow, weekly_cases_summary, weekly_rainfall_ready):
     publish_flow(set_flow, {}, invalidate=("gold.signal",))
-    mo.stop(not weekly_rainfall_ready or bronze_bulletin is None)
+    mo.stop(not weekly_rainfall_ready or bronze_bulletin is None or weekly_cases_summary is None)
     con.execute(
         """
         CREATE OR REPLACE TABLE gold.signal AS
@@ -2201,8 +2296,8 @@ def progress_summary(todo1_ok: bool, todo2_ok: bool) -> mo.Html:
 
 @app.cell(hide_code=True)
 def _(checkpoint_2):
-    # Every cell after TODO 1 waits for it, the next summary cell included, so this cell
-    # shows the progress until TODO 1 passes.
+    # The next summary cell needs gold, which waits for TODO 1, so this cell shows the
+    # progress until TODO 1 passes.
     mo.stop(checkpoint_2)
     progress_summary(todo1_ok=False, todo2_ok=False)
     return
@@ -2323,7 +2418,8 @@ def flow_diagram(
     }
     # Each gold input ends at its own labeled port, rather than sharing an ambiguous bus.
     gold_inputs = {
-        "silver.cases": (202, "Años del calendario"),
+        # silver.cases only marks the years SIVIGILA covers: there, a week without cases is 0.
+        "silver.cases": (202, "Cobertura de SIVIGILA"),
         "bronze.entities": (324, "Entidades del calendario"),
         "silver.weekly_cases": (378, "Casos por semana"),
         "silver.daily_rainfall": (498, "Límite del calendario"),
@@ -2553,7 +2649,7 @@ def flow_diagram(
         + "".join(nodes)
         + '</div><div class="dengue-legend">'
         '<span><i class="dengue-legend-line"></i>Medidas</span>'
-        '<span><i class="dengue-legend-line support"></i>Referencias, calendario y calidad</span>'
+        '<span><i class="dengue-legend-line support"></i>Referencias, calendario, cobertura y calidad</span>'
         '<span class="incoming">→ Entradas a la tabla elegida</span>'
         '<span class="outgoing">→ Salidas hacia otras tablas</span></div></div>' + "".join(popovers)
     )

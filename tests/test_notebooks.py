@@ -307,6 +307,18 @@ def test_initial_student_notebook_waits_for_todos(
     assert flow["bronze.sivigila"]["rows"] == by_department["cases"].sum()
     assert "silver.weekly_cases" not in flow
     assert "gold.signal" not in flow
+    # Tables wait only for the inputs the map draws: the references and the rainfall route,
+    # TODO 2 included, do not need the dates. Integration and the TODO 2 check still do.
+    assert sum(name.startswith("bronze.") for name in flow) == 6
+    for table in (
+        "silver.municipality_entity",
+        "silver.entity_daily_rainfall",
+        "silver.weekly_rainfall",
+    ):
+        assert flow[table]["rows"], table
+    assert definitions["weekly_rainfall_ready"] is True
+    assert "aggregation_ok" not in definitions
+    assert html_outputs(outputs, "La integración espera el TODO 1")
     assert definitions["date_comparison"].get_column("Después: notification_date").null_count() == 4
     diagram = flow_markup(definitions)
     assert len(diagram.nodes) == 13  # Pending tables remain visible in the complete map.
@@ -396,6 +408,8 @@ def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert flow["silver.cases"]["status"] == "checked"
         assert flow["silver.weekly_rainfall"]["status"] == expected_flow_status
         assert flow["gold.signal"]["status"] == expected_flow_status
+        assert not html_outputs(outputs, "La integración espera el TODO 1")
+        assert definitions["per_station_mismatch"] is False
         stations = definitions["station_week_example"]
         result = definitions["rainfall_week_example"]
         assert result.height == 1
@@ -683,12 +697,54 @@ def test_alias_demonstration_explains_missing_rainfall(
     assert not html_outputs(outputs, "Revisa estas columnas")
     flow = definitions["get_flow"]()
     assert flow["silver.daily_rainfall"]["status"] == "warning"
+    # Each flagged table must say why, not repeat the success text.
+    entity_rainfall = flow["silver.entity_daily_rainfall"]
+    assert entity_rainfall["status"] == "warning"
+    assert "6 estaciones sin municipio (`CALI`, `BUGA`)" in entity_rainfall["detail"]
     assert flow["silver.weekly_rainfall"]["status"] == "warning"
     assert flow["gold.signal"]["status"] == "warning"
     locations = definitions["location_comparison"]
     # Original casing varies across years, so the same alias can have several rows.
     assert locations["Después: código DIVIPOLA"].null_count() == locations.height
     assert set(locations["Antes: municipio IDEAM"].str.to_uppercase()) == {"CALI", "BUGA"}
+
+
+def test_week_panel_flags_an_edited_first_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The panel repeats the template's per_station, so it must flag a query that changed it."""
+    first_step = "                   sum(precipitation_mm) AS mm\n"
+    student = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
+    assert student.count(first_step) == 1  # only the TODO 2 cell, not the panel's copy
+    notebook = _student_with_edits(
+        tmp_path, TODOS, [(first_step, first_step.replace("sum(", "avg("))]
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["per_station_mismatch"] is True
+    assert html_outputs(outputs, "no sale de combinar estos totales")
+    assert definitions["aggregation_ok"] is False
+
+
+def test_todo2_query_error_becomes_a_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broken TODO 2 query shows a hint and an error status, not a stale table."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1"],
+        [
+            (
+                "count(DISTINCT station_code) AS stations_with_data",
+                "count(DISTINCT station) AS stations_with_data",
+            )
+        ],
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["weekly_rainfall_ready"] is False
+    assert html_outputs(outputs, "DuckDB no pudo ejecutar tu consulta")
+    flow = definitions["get_flow"]()
+    assert flow["silver.weekly_rainfall"]["status"] == "error"
+    assert flow["silver.weekly_rainfall"]["rows"] is None
+    assert "gold.signal" not in flow
+    assert "gold" not in definitions
 
 
 @pytest.mark.network

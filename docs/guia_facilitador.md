@@ -136,7 +136,9 @@ Abre el facilitador en otra terminal con
 `uv run marimo edit notebooks/workshop_facilitator.py --port 2719`.
 Si las celdas aparecen sin ejecutar, pulsa ▶ para correr todas. Al abrir la versión del
 estudiante, la demostración del PDF ya pasa y el TODO 1 de fechas está pendiente;
-las celdas que necesitan las fechas esperan. En el facilitador, los dos ejercicios
+las celdas que necesitan las fechas esperan. Las referencias y la ruta de lluvia, incluido
+el TODO 2, no dependen de ellas y ya se ejecutan; la integración en oro y la comprobación
+del TODO 2 esperan al TODO 1. En el facilitador, los dos ejercicios
 están completos y la tabla del ejercicio coincide con la oficial en las métricas validadas.
 
 Para ensayar los ejercicios conservando tus respuestas, trabaja en una copia local:
@@ -184,7 +186,9 @@ abierta puede conservar código anterior. La regeneración actualiza
    y la oficial. El parquet oficial debe tener **750 filas, 13 columnas, 5 entidades y
    150 semanas**, sin llaves repetidas. Comprueba la legibilidad con el proyector.
    Abre **Seguir una semana real**: las filas por estación deben conducir a una sola
-   fila de esa entidad y semana. `per_station` se presenta como CTE, no como tabla guardada.
+   fila de esa entidad y semana. `per_station` se presenta como CTE, no como tabla guardada;
+   el acordeón repite el primer paso de la plantilla y avisa si el resultado no sale de esos
+   totales (por ejemplo, si alguien cambió `sum(precipitation_mm)` en `per_station`).
    Tras completar los ejercicios, vuelve a un formato de fecha inválido: el mapa y
    sus fichas deben retirar los resultados dependientes anteriores. Abre `gold.signal`:
    debe quedar pendiente, sin la muestra anterior. Restaura la solución.
@@ -269,15 +273,17 @@ El mapa reúne las **13 tablas y todas sus dependencias** en una sola vista, con
 de **bronce → plata → oro**. Dentro de plata, las flechas distinguen los pasos de tipado,
 ubicación y agregación. Las tres fuentes y las tres referencias (DIVIPOLA, alias y
 entidades) forman las seis tablas de bronce; cada tabla tiene una descripción breve
-de su función. Oro reserva una entrada identificada para cada aporte: años, entidades,
-casos semanales, límite del calendario, días sospechosos, acumulados y lluvia semanal.
+de su función. Oro reserva una entrada identificada para cada aporte: cobertura de
+SIVIGILA, entidades, casos semanales, límite del calendario, días sospechosos, acumulados
+y lluvia semanal. La cobertura no define el calendario: indica los años en que una semana
+sin casos vale 0; fuera de ellos, el conteo queda vacío.
 
 Para explicar un cruce, usa **Seguir conexiones de**. Las **entradas** a esa tabla se
 resaltan en azul; las **salidas** hacia otras tablas, en verde. Las otras líneas se
 atenúan y una lista encima del mapa identifica las entradas y los consumidores por
 nombre. Las tablas permanecen visibles. Con **Todas las tablas**, puedes explorar
 pasando el cursor o enfocando una tabla con Tab. Las líneas continuas transportan las
-medidas; las discontinuas aportan referencias, calendario o señales de calidad.
+medidas; las discontinuas aportan referencias, calendario, cobertura o señales de calidad.
 Las flechas terminan en la tabla que consume la entrada; un cruce de líneas no crea
 una relación adicional.
 
