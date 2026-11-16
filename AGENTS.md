@@ -94,9 +94,11 @@ pytest without network tests (slow ones included), and `dengue-pipeline run`.
   helpers may only use names from the setup cell.
 - Tests run notebooks headless via `app.run()`, with UI elements at their defaults (button
   clicks are simulated by text replacement). `tests/test_notebooks.py` solves each TODO with
-  exact string replacements on `workshop.py` and asserts `todo1_ok` and
-  `checkpoint_1`…`checkpoint_3`. If you change TODO text or rename a checkpoint, update that
-  test in the same change.
+  exact string replacements on `workshop.py`. There are two required exercises: date format
+  (`checkpoint_2`) and station aggregation (`aggregation_ok`). `numbers_ok` and `checkpoint_1`
+  validate the prepared PDF demonstration; `checkpoint_3` checks gold structure only, not
+  metric correctness. If you change TODO text or rename a checkpoint, update the tests too.
+  Help accordions intentionally include solutions for participants who need to catch up.
 - The numbers in `docs/guia_facilitador.md` ("Números que vas a ver") come from the data.
   Update them when data or notebook logic changes.
 

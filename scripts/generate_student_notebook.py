@@ -35,8 +35,9 @@ _MARKER = re.compile(r"^\s*(?:#|--) (?P<dir>>>>|<<<) (?P<block>SOLUTION|STUDENT)
 _COMMENT = re.compile(r"^(?P<indent>\s*)(?:#|--)(?: (?P<remainder>.*))?$")
 
 NOTICE = (
-    "# GENERATED FILE by scripts/generate_student_notebook.py: DO NOT edit by hand.\n"
-    "# Edit notebooks/workshop_facilitator.py and rerun this script.\n"
+    "# GENERATED FILE by scripts/generate_student_notebook.py.\n"
+    "# Participants: edit your copy to solve the two workshop exercises.\n"
+    "# Maintainers: edit notebooks/workshop_facilitator.py and rerun this script.\n"
 )
 
 

@@ -24,6 +24,11 @@ epidemiológica) lista para gráficas y modelos.
 * Cazar las trampas reales de los datos públicos colombianos: fechas guardadas como texto,
   nombres que no coinciden, semanas epidemiológicas, distritos que se reportan aparte…
 
+El recorrido para un grupo mixto está diseñado para **50 minutos + 10 de preguntas**. Hay
+**dos ejercicios obligatorios en parejas**, con plantillas y ayudas: elegir el formato de una fecha y combinar
+los totales semanales de lluvia de varias estaciones. La extracción del PDF, la API y los alias
+se muestran como demostraciones guiadas. Los detalles adicionales quedan para después.
+
 ## ⚡ Inicio rápido
 
 Elige **una** de estas tres opciones.
@@ -37,7 +42,9 @@ Elige **una** de estas tres opciones.
    (**Server**). La vista previa por sí sola no permite resolver los TODOs; la opción
    WebAssembly no está validada para las dependencias de este taller.
 3. Ejecuta todas las celdas con ▶. Los datos se descargan solos (ver `REPO_URL` al inicio).
-   Los checkpoints pendientes al abrir son parte del ejercicio.
+   El PDF ya está resuelto; el TODO 1 de fechas aparece pendiente. Las dos celdas de ejercicio
+   están visibles y el código de apoyo está plegado. Cada TODO tiene una pista y una solución
+   desplegable para continuar.
 
 **Preparación del evento:** este acceso sigue pendiente de un ensayo con cuenta nueva.
 El repositorio se mantiene público para facilitar las pruebas. Consulta el
@@ -52,9 +59,13 @@ por ti) y Git.
 git clone https://github.com/davidvanegas2/dengue-pipeline.git
 cd dengue-pipeline
 uv sync --locked                         # instala las versiones de uv.lock
-uv run dengue-pipeline run                # corre el pipeline completo, sin internet
 uv run marimo edit notebooks/workshop.py   # abre el taller en el navegador
 ```
+
+El notebook usa los datos guardados y no necesita ejecutar primero la CLI. Para reconstruir
+la bodega y la tabla oficial con el procesamiento automatizado, usa
+`uv run dengue-pipeline run`. Los ejercicios se resuelven en tu copia del notebook; la CLI
+ejecuta el paquete de `src/dengue_pipeline/` y los archivos de `sql/`.
 
 ### Opción C · GitHub Codespaces
 
@@ -114,7 +125,7 @@ en [`docs/arquitectura.md`](docs/arquitectura.md).
 
 ```text
 ├── notebooks/
-│   ├── workshop.py              ← el taller, con ejercicios (GENERADO, no editar)
+│   ├── workshop.py              ← generado; las participantes editan su copia
 │   └── workshop_facilitator.py  ← el taller resuelto (fuente de verdad)
 ├── src/dengue_pipeline/         ← el pipeline como paquete de Python
 │   ├── extract/                ← bulletin.py · sivigila.py · ideam.py
