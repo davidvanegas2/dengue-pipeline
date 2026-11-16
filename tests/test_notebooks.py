@@ -13,6 +13,7 @@ import shutil
 import sys
 import urllib.request
 from collections.abc import Sequence
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,41 @@ def html_outputs(outputs: Sequence[Any], marker: str) -> list[str]:
     return [o.text for o in outputs if marker in getattr(o, "text", "")]
 
 
+class FlowMarkup(HTMLParser):
+    """Read the map's interactive nodes and lineage, independently of its layout."""
+
+    def __init__(self, markup: str) -> None:
+        super().__init__()
+        self.nodes: list[dict[str, str | None]] = []
+        self.dialogs: list[dict[str, str | None]] = []
+        self.edges: list[tuple[str | None, str | None]] = []
+        self.links: list[dict[str, str | None]] = []
+        self.gold_sources: list[str | None] = []
+        self.feed(markup)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag == "input" and attributes.get("type") == "button" and "data-table" in attributes:
+            self.nodes.append(attributes)
+        if "popover" in attributes:
+            self.dialogs.append(attributes)
+        if tag == "path" and "data-source" in attributes:
+            self.edges.append((attributes["data-source"], attributes["data-target"]))
+        if tag == "g" and attributes.get("class") == "dengue-link":
+            self.links.append(attributes)
+        if "data-gold-source" in attributes:
+            self.gold_sources.append(attributes["data-gold-source"])
+
+
+def flow_markup(definitions: dict[str, Any], focus: str | None = None) -> FlowMarkup:
+    reports = definitions["get_flow"]()
+    cards = {
+        table: definitions["table_card"](table, reports.get(table), preview=True)
+        for table in definitions["TABLE_GUIDE"]
+    }
+    return FlowMarkup(definitions["flow_diagram"](reports, cards, focus).text)
+
+
 def assert_ml_contract(export: bytes) -> None:
     """The official ML table is the committed gold snapshot: 750 rows x 13 columns."""
     table = pl.read_parquet(io.BytesIO(export))
@@ -134,6 +170,55 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     assert definitions["gold_matches_repo"] is True
     assert definitions["gold_mismatches"] == []
     assert "interruptor de alias" not in lag_section(rendered)
+    flow = definitions["get_flow"]()
+    tables = (
+        definitions["con"]
+        .sql(
+            "SELECT table_schema || '.' || table_name FROM information_schema.tables "
+            "WHERE table_schema IN ('bronze', 'silver', 'gold')"
+        )
+        .fetchall()
+    )
+    assert set(flow) == {name for (name,) in tables}
+    assert flow["gold.signal"]["rows"] == 750
+    assert flow["gold.signal"]["columns"] == 13
+    assert flow["gold.signal"]["status"] == "checked"
+    # per_station is a CTE, not a persisted table in the explorer.
+    assert not any("per_station" in name for name in flow)
+    diagram = flow_markup(definitions)
+    assert len(diagram.nodes) == len(diagram.dialogs) == 13
+    assert {node["data-table"] for node in diagram.nodes} == set(flow)
+    # Every persisted table, including the three references, opens its own card.
+    assert {node["popovertarget"] for node in diagram.nodes} == {
+        dialog["id"] for dialog in diagram.dialogs
+    }
+    assert all(
+        dialog["popover"] == "auto" and dialog["role"] == "dialog" for dialog in diagram.dialogs
+    )
+    expected_edges = {
+        (source, table)
+        for table, guide in definitions["TABLE_GUIDE"].items()
+        for source in guide.sources
+        if source in flow
+    }
+    assert len(diagram.edges) == len(expected_edges) == 18
+    assert set(diagram.edges) == expected_edges
+    assert all(node["data-status"] == flow[node["data-table"]]["status"] for node in diagram.nodes)
+    assert len(diagram.gold_sources) == 7
+    assert set(diagram.gold_sources) == set(definitions["TABLE_GUIDE"]["gold.signal"].sources)
+    # Focusing a shared reference, an intermediate table or the final table must
+    # distinguish inputs from consumers while preserving the complete map.
+    for selected in ("bronze.alias", "silver.municipality_entity", "gold.signal"):
+        focused = flow_markup(definitions, selected)
+        assert {node["data-table"] for node in focused.nodes} == set(flow)
+        assert set(focused.edges) == expected_edges
+        for link in focused.links:
+            expected_relation = "context"
+            if link["data-target"] == selected:
+                expected_relation = "incoming"
+            elif link["data-source"] == selected:
+                expected_relation = "outgoing"
+            assert link["data-relation"] == expected_relation
 
 
 @pytest.mark.parametrize("variant", ["facilitator", "student"])
@@ -216,6 +301,30 @@ def test_initial_student_notebook_waits_for_todos(
     assert by_department["date_pct"].to_list() == [0.0] * by_department.height
     # The progress summary is visible from the start, not only after TODO 1.
     assert summary_marks(outputs) == {"TODO 1": "⏳", "TODO 2": "⏳"}
+    flow = definitions["get_flow"]()
+    assert flow["silver.cases"]["status"] == "warning"
+    assert flow["silver.cases"]["sample"]["notification_date"].null_count() == 5
+    assert flow["bronze.sivigila"]["rows"] == by_department["cases"].sum()
+    assert "silver.weekly_cases" not in flow
+    assert "gold.signal" not in flow
+    # Tables wait only for the inputs the map draws: the references and the rainfall route,
+    # TODO 2 included, do not need the dates. Integration and the TODO 2 check still do.
+    assert sum(name.startswith("bronze.") for name in flow) == 6
+    for table in (
+        "silver.municipality_entity",
+        "silver.entity_daily_rainfall",
+        "silver.weekly_rainfall",
+    ):
+        assert flow[table]["rows"], table
+    assert definitions["weekly_rainfall_ready"] is True
+    assert "aggregation_ok" not in definitions
+    assert html_outputs(outputs, "La integración espera el TODO 1")
+    assert definitions["date_comparison"].get_column("Después: notification_date").null_count() == 4
+    diagram = flow_markup(definitions)
+    assert len(diagram.nodes) == 13  # Pending tables remain visible in the complete map.
+    for node in diagram.nodes:
+        table = node["data-table"]
+        assert node["data-status"] == (flow[table]["status"] if table in flow else "pending")
 
 
 @pytest.mark.parametrize(
@@ -238,6 +347,11 @@ def test_checkpoint_2_rejects_wrong_date_formats(
     assert "checkpoint_3" not in definitions
     assert html_outputs(outputs, message)
     assert summary_marks(outputs) == {"TODO 1": "⏳", "TODO 2": "⏳"}
+    flow = definitions["get_flow"]()
+    assert flow["silver.cases"]["status"] == ("error" if "%D" in date_format else "warning")
+    assert "gold.signal" not in flow
+    if "%D" in date_format:
+        assert flow["silver.cases"].get("sample") is None
 
 
 @pytest.mark.parametrize(
@@ -289,6 +403,56 @@ def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         # downloaded exercise table and the charts depend on it.
         assert definitions["gold"].schema == definitions["final_gold"].schema
         assert html_outputs(outputs, "Incógnita 2")
+        flow = definitions["get_flow"]()
+        expected_flow_status = "checked" if expected["aggregation_ok"] else "warning"
+        assert flow["silver.cases"]["status"] == "checked"
+        assert flow["silver.weekly_rainfall"]["status"] == expected_flow_status
+        assert flow["gold.signal"]["status"] == expected_flow_status
+        assert not html_outputs(outputs, "La integración espera el TODO 1")
+        assert definitions["per_station_mismatch"] is False
+        stations = definitions["station_week_example"]
+        result = definitions["rainfall_week_example"]
+        assert result.height == 1
+        assert stations.height == result["stations_with_data"][0]
+        expected_mm = stations["mm"].mean() if expected["aggregation_ok"] else stations["mm"].sum()
+        assert float(result["mean_precipitation_mm"][0]) == pytest.approx(
+            float(round(expected_mm, 2))
+        )
+
+
+def test_flow_hides_stale_tables_until_their_dependencies_reexecute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definitions = run_notebook(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
+    previous = definitions["get_flow"]()
+    # A failed edit can leave the old DuckDB tables in memory. The display must not
+    # mistake those tables for current outputs or allow inspecting their old samples.
+    definitions["publish_flow"](
+        definitions["set_flow"],
+        {"silver.cases": {"status": "error", "rows": None, "detail": "Formato inválido."}},
+        invalidate=("silver.cases",),
+    )
+    current = definitions["get_flow"]()
+    assert definitions["con"].sql("SELECT count(*) FROM gold.signal").fetchall() == [(750,)]
+    assert "gold.signal" not in current
+    assert "silver.weekly_cases" not in current
+    assert "sample" not in current["silver.cases"]
+    assert current["silver.daily_rainfall"] is previous["silver.daily_rainfall"]
+    assert previous["gold.signal"]["status"] == "checked"  # previous snapshots stay immutable
+    diagram = flow_markup(definitions)
+    assert (
+        next(node for node in diagram.nodes if node["data-table"] == "gold.signal")["data-status"]
+        == "pending"
+    )
+    pending_card = definitions["table_card"](
+        "gold.signal", current.get("gold.signal"), preview=True
+    )
+    assert "Pendiente de sus entradas" in pending_card.text
+    assert "Muestra de hasta cinco filas" not in pending_card.text
+    assert "750 filas" not in pending_card.text
+    # Revalidating the input alone must not restore a downstream snapshot.
+    definitions["publish_flow"](definitions["set_flow"], {"silver.cases": previous["silver.cases"]})
+    assert "gold.signal" not in definitions["get_flow"]()
 
 
 def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -> Path:
@@ -531,6 +695,56 @@ def test_alias_demonstration_explains_missing_rainfall(
     assert html_outputs(outputs, "activa el interruptor")
     assert not html_outputs(outputs, "revisa el cálculo y el detalle")
     assert not html_outputs(outputs, "Revisa estas columnas")
+    flow = definitions["get_flow"]()
+    assert flow["silver.daily_rainfall"]["status"] == "warning"
+    # Each flagged table must say why, not repeat the success text.
+    entity_rainfall = flow["silver.entity_daily_rainfall"]
+    assert entity_rainfall["status"] == "warning"
+    assert "6 estaciones sin municipio (`CALI`, `BUGA`)" in entity_rainfall["detail"]
+    assert flow["silver.weekly_rainfall"]["status"] == "warning"
+    assert flow["gold.signal"]["status"] == "warning"
+    locations = definitions["location_comparison"]
+    # Original casing varies across years, so the same alias can have several rows.
+    assert locations["Después: código DIVIPOLA"].null_count() == locations.height
+    assert set(locations["Antes: municipio IDEAM"].str.to_uppercase()) == {"CALI", "BUGA"}
+
+
+def test_week_panel_flags_an_edited_first_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The panel repeats the template's per_station, so it must flag a query that changed it."""
+    first_step = "                   sum(precipitation_mm) AS mm\n"
+    student = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
+    assert student.count(first_step) == 1  # only the TODO 2 cell, not the panel's copy
+    notebook = _student_with_edits(
+        tmp_path, TODOS, [(first_step, first_step.replace("sum(", "avg("))]
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["per_station_mismatch"] is True
+    assert html_outputs(outputs, "no sale de combinar estos totales")
+    assert definitions["aggregation_ok"] is False
+
+
+def test_todo2_query_error_becomes_a_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broken TODO 2 query shows a hint and an error status, not a stale table."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1"],
+        [
+            (
+                "count(DISTINCT station_code) AS stations_with_data",
+                "count(DISTINCT station) AS stations_with_data",
+            )
+        ],
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["weekly_rainfall_ready"] is False
+    assert html_outputs(outputs, "DuckDB no pudo ejecutar tu consulta")
+    flow = definitions["get_flow"]()
+    assert flow["silver.weekly_rainfall"]["status"] == "error"
+    assert flow["silver.weekly_rainfall"]["rows"] is None
+    assert "gold.signal" not in flow
+    assert "gold" not in definitions
 
 
 @pytest.mark.network

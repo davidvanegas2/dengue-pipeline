@@ -16,14 +16,17 @@ __generated_with = "0.25.2"
 app = marimo.App(width="medium", app_title="Taller · Del PDF a la tabla oro")
 
 with app.setup(hide_code=True):
+    import html
     import io
     import json
     import os
     import re
     import urllib.parse
     import urllib.request
+    from collections.abc import Callable
     from datetime import date, timedelta
     from pathlib import Path
+    from typing import Any, NamedTuple
 
     import altair as alt
     import duckdb
@@ -34,6 +37,123 @@ with app.setup(hide_code=True):
     # When this notebook runs outside the repository (for example, in molab),
     # download data from GitHub. Update this URL if you use a fork or another branch.
     REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"
+
+    class TableGuide(NamedTuple):
+        step: int
+        grain: str
+        sources: tuple[str, ...]
+        operation: str
+        purpose: str
+
+    FLOW_STEPS = ("Cargar", "Tipar", "Ubicar", "Agregar", "Integrar")
+    # This catalog describes the notebook's tables, not the package warehouse.
+    TABLE_GUIDE = {
+        "bronze.bulletin": TableGuide(
+            0,
+            "Una entidad del boletín en una semana de publicación; incluye la fila Total.",
+            ("PDF de las semanas 26 y 27",),
+            "Extraer la tabla, convertir sus números y conservar la semana y el archivo.",
+            "Consultar los acumulados publicados y comprobar que la extracción conserva el total.",
+        ),
+        "bronze.sivigila": TableGuide(
+            0,
+            "Un caso notificado, con los campos originales como texto.",
+            ("CSV del piloto SIVIGILA",),
+            "Cargar el CSV con all_varchar = true.",
+            "Conservar los valores de origen antes de decidir sus tipos.",
+        ),
+        "bronze.divipola": TableGuide(
+            0,
+            "Un municipio con sus códigos y nombres de referencia.",
+            ("CSV DIVIPOLA del piloto",),
+            "Cargar el catálogo municipal como texto.",
+            "Dar una identidad común a los municipios de fuentes diferentes.",
+        ),
+        "bronze.entities": TableGuide(
+            0,
+            "Una entidad territorial del piloto: departamento o distrito.",
+            ("CSV de entidades del piloto",),
+            "Cargar las entidades que vamos a analizar.",
+            "Separar los distritos de su departamento y definir las entidades de la tabla oro.",
+        ),
+        "bronze.alias": TableGuide(
+            0,
+            "Una equivalencia entre un nombre municipal del IDEAM y el de DIVIPOLA.",
+            ("CSV de alias municipales",),
+            "Cargar las equivalencias preparadas para el piloto.",
+            "Reconocer nombres como CALI y SANTIAGO DE CALI sin perder estaciones.",
+        ),
+        "bronze.ideam": TableGuide(
+            0,
+            "Una estación en un día; la API ya agregó las lecturas de ese día.",
+            ("Parquet de lluvia diaria guardado desde la API",),
+            "Leer la copia local de la consulta agregada al IDEAM.",
+            "Trabajar con una entrada reproducible sin descargar las lecturas individuales.",
+        ),
+        "silver.cases": TableGuide(
+            1,
+            "Un caso notificado; se conserva el detalle individual.",
+            ("bronze.sivigila",),
+            "Convertir fechas, año y semana; formar el código municipal de cinco dígitos.",
+            "Trabajar con fechas reales y relacionar cada caso con un municipio.",
+        ),
+        "silver.municipality_entity": TableGuide(
+            2,
+            "Un municipio y la entidad territorial a la que aporta sus datos.",
+            ("bronze.divipola", "bronze.entities"),
+            "Asignar primero el distrito, si existe; en otro caso, el departamento.",
+            "Usar el mismo criterio territorial para casos y estaciones.",
+        ),
+        "silver.weekly_cases": TableGuide(
+            3,
+            "Una entidad territorial en una semana epidemiológica con casos.",
+            ("silver.cases", "silver.municipality_entity"),
+            "Seleccionar eventos 210 y 220 no descartados y contar por entidad, año y semana.",
+            "Pasar de casos individuales a conteos semanales que podamos integrar con la lluvia.",
+        ),
+        "silver.daily_rainfall": TableGuide(
+            2,
+            "Una estación en un día, ahora con municipio y una bandera de lectura sospechosa.",
+            ("bronze.ideam", "bronze.alias", "bronze.divipola"),
+            "Tipar fecha y lluvia; normalizar nombres, aplicar alias y buscar el código municipal.",
+            "Ubicar las estaciones. Los días sospechosos se señalan y se conservan.",
+        ),
+        "silver.entity_daily_rainfall": TableGuide(
+            2,
+            "Una estación en un día, con su entidad territorial; todavía no se agrega.",
+            ("silver.daily_rainfall", "silver.municipality_entity"),
+            "Cruzar por código municipal para añadir la entidad territorial.",
+            "Preparar la agrupación territorial sin confundir una estación con una entidad.",
+        ),
+        "silver.weekly_rainfall": TableGuide(
+            3,
+            "Una entidad territorial en una semana epidemiológica con lluvia disponible.",
+            ("silver.entity_daily_rainfall",),
+            "Sumar días por estación y semana en per_station; después combinar las estaciones.",
+            "Obtener la misma granularidad que los casos semanales antes del cruce.",
+        ),
+        "gold.signal": TableGuide(
+            4,
+            "Una entidad territorial en cada semana del período, incluso sin observaciones.",
+            (
+                "silver.weekly_cases",
+                "silver.weekly_rainfall",
+                "bronze.bulletin",
+                "bronze.entities",
+                "silver.cases",
+                "silver.daily_rainfall",
+                "silver.entity_daily_rainfall",
+            ),
+            "Crear el calendario de entidades × semanas y añadir casos, lluvia y días sospechosos.",
+            "Disponer de una tabla de análisis con llave única, procedencia y ausencias explícitas.",
+        ),
+    }
+    FLOW_STATUS = {
+        "created": "○ Creada",
+        "checked": "✓ Verificación aprobada",
+        "warning": "! Revisar",
+        "error": "× No se pudo actualizar",
+    }
 
 
 @app.function(hide_code=True)
@@ -153,9 +273,12 @@ def _():
     mo.md(r"""
     ## 1 · Empieza por el final
 
-    Esta es la tabla que vamos a construir durante el taller: **una fila por
-    entidad territorial y semana epidemiológica**, con casos de dengue y lluvia.
-    Es la que usará el taller de ML.
+    **Vista previa del resultado oficial.** Esta tabla ya viene preparada por el
+    pipeline del repositorio: **una fila por entidad territorial y semana
+    epidemiológica**, con casos de dengue y lluvia. Es la entrada del taller de ML.
+
+    Durante el recorrido construiremos nuestra propia tabla, `gold.signal`.
+    Descargar o explorar esta vista previa no completa los pasos del ejercicio.
     """)
     return
 
@@ -200,29 +323,123 @@ def _():
     mo.md(r"""
     ## 2 · El mapa
 
-    Tres fuentes, tres formatos, tres granularidades. La técnica para no perderse
-    es la **arquitectura medallón**: como en una cocina.
+    Tres fuentes, distintos formatos y distintas unidades de observación.
+    La **arquitectura medallón** separa las responsabilidades de cada transformación:
 
-    * **Bronce** = el mercado. Los datos tal como llegan, sin tocar.
-    * **Plata** = la *mise en place*. Limpios, con tipos correctos y llaves comunes.
-    * **Oro** = el plato servido. Listos para comer (graficar o entrenar).
+    | Capa | Qué aporta | Qué todavía falta |
+    |---|---|---|
+    | Bronce | Entradas consultables y trazables | Interpretar tipos y relacionar fuentes |
+    | Plata | Fechas, ubicaciones y agregaciones explícitas | Integrar las medidas sobre un calendario común |
+    | Oro | Una fila por entidad y semana, con procedencia y ausencias | Decidir cómo usarla en el análisis |
+
+    El recorrido es **cargar → tipar → ubicar → agregar → integrar**.
+    Plata reúne varias de esas acciones. Refinar no siempre reduce las filas:
+    también puede añadir significado, resolver una llave o hacer visible una ausencia.
+
+    **Cómo leer el mapa:** avanza de izquierda a derecha, **bronce → plata → oro**.
+    En plata, sigue las flechas para distinguir tipado, ubicación y agregación.
+    El color de fondo identifica la capa; el texto de cada tabla indica su estado actual.
+    Una tabla creada puede tener una verificación pendiente o fallida.
+    El mapa se actualiza al ejecutar o corregir las celdas. Cada ficha del recorrido
+    señala qué estamos explicando, aunque marimo ya haya ejecutado otros bloques.
+
+    Bronce conserva los archivos preparados para el piloto: el PDF ya se extrajo
+    y la consulta del IDEAM ya agrupó lecturas por estación y día.
+
+    El mapa reúne **las seis tablas de bronce, las seis de plata y la tabla oro**.
+    DIVIPOLA, alias y entidades también son bronce: son referencias que permiten
+    relacionar las tres fuentes. Las flechas muestran todas las entradas entre tablas,
+    incluidas las que definen el calendario, la cobertura y las señales de calidad de oro.
+    El boletín llega directamente a oro aquí; el paquete completo también lo
+    prepara en una tabla plata.
+
+    Para seguir un cruce, elige una tabla en **Seguir conexiones de**. Sus entradas
+    se ven en **azul** y sus salidas en **verde**; las demás conexiones se atenúan.
+    En **Todas las tablas**, pasa el cursor o usa Tab para explorar del mismo modo.
+    Oro identifica qué aporta cada entrada: medidas, calendario, cobertura o señales de
+    calidad. La cobertura de SIVIGILA decide si una semana sin casos vale 0 o queda vacía.
+
+    **Pulsa una tabla para abrir su ficha aquí mismo:** qué representa una fila,
+    de dónde viene, cómo se construye, para qué sirve y una muestra si ya se creó.
+    Ciérrala con **Cerrar** o **Esc** para volver al mismo punto del mapa.
     """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.mermaid(
-        """
-        flowchart LR
-          A["📄 Boletín INS<br/>PDF semanal"] --> B[("🥉 bronce")]
-          S["🗂️ SIVIGILA<br/>casos individuales"] --> B
-          I["🌧️ IDEAM<br/>API datos.gov.co"] --> B
-          B -- "limpiar, tipos,<br/>códigos DANE" --> P[("🥈 plata")]
-          P -- "cruzar por<br/>entidad × semana" --> O[("🥇 oro")]
-          O --> G["📈 gráficas"]
-          O --> M["🤖 taller de ML"]
-        """
+    # Only display cells read this state. SQL cells publish snapshots and keep their
+    # explicit dependencies: the map must remain visible when mo.stop blocks a branch.
+    get_flow, set_flow = mo.state({})
+    flow_focus = mo.ui.dropdown(
+        ["Todas las tablas", *TABLE_GUIDE], value="Todas las tablas", label="Seguir conexiones de"
+    )
+    return flow_focus, get_flow, set_flow
+
+
+@app.cell(hide_code=True)
+def _(flow_focus, get_flow):
+    _reports = get_flow()
+    _created = sum(report.get("rows") is not None for report in _reports.values())
+    _cards = {table: table_card(table, _reports.get(table), preview=True) for table in TABLE_GUIDE}
+    _focus = None if flow_focus.value == "Todas las tablas" else flow_focus.value
+    _relationships = mo.md("Todas las tablas permanecen visibles al seguir una conexión.")
+    if _focus:
+        _sources = " · ".join(f"`{source}`" for source in TABLE_GUIDE[_focus].sources)
+        _targets = " · ".join(
+            f"`{table}`" for table, guide in TABLE_GUIDE.items() if _focus in guide.sources
+        )
+        _relationships = mo.md(
+            f"**Entradas de `{_focus}`:** {_sources}\n\n"
+            f"**Se usa en:** {_targets or 'Es la tabla final del ejercicio.'}"
+        )
+    mo.vstack(
+        [
+            mo.md(
+                f"**{_created} de {len(TABLE_GUIDE)} tablas con resultado vigente.** "
+                "El conteo indica disponibilidad, no un porcentaje de calidad."
+            ),
+            flow_focus,
+            _relationships,
+            flow_diagram(_reports, _cards, _focus),
+            mo.md(
+                "Estos son los nombres del notebook. La entrega oficial del paquete se llama "
+                "`gold.weekly_dengue_signal`; nuestra tabla del ejercicio es `gold.signal`."
+            ),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(get_flow):
+    _reports = get_flow()
+    _counts = [
+        f"**{label}:** "
+        f"{sum(name.startswith(layer + '.') and report.get('rows') is not None for name, report in _reports.items())}"
+        f" / {sum(name.startswith(layer + '.') for name in TABLE_GUIDE)} tablas"
+        for layer, label in (("bronze", "Bronce"), ("silver", "Plata"), ("gold", "Oro"))
+    ]
+    _checks = [
+        f"**{label}:** {FLOW_STATUS[_reports[table]['status']] if table in _reports else '⏳ Pendiente'}"
+        for table, label in (
+            ("silver.cases", "Fechas y municipios"),
+            ("silver.weekly_rainfall", "Agregación de lluvia"),
+            ("gold.signal", "Integración"),
+        )
+    ]
+    mo.sidebar(
+        mo.vstack(
+            [
+                mo.md("### Refinamiento actual\n\n" + "\n\n".join(_counts)),
+                mo.md("### Controles\n\n" + "\n\n".join(_checks)),
+                mo.md(
+                    "La tabla oficial del inicio es una vista previa. "
+                    "Estos estados corresponden a las tablas del ejercicio."
+                ),
+            ]
+        ),
+        width="260px",
     )
     return
 
@@ -586,7 +803,8 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(bulletin_extracts, checkpoint_1, con):
+def _(bulletin_extracts, checkpoint_1, con, set_flow):
+    publish_flow(set_flow, {}, invalidate=("bronze.bulletin",))
     mo.stop(
         not checkpoint_1,
         mo.md("⏳ *La carga espera que los dos boletines coincidan con sus totales.*"),
@@ -607,7 +825,14 @@ def _(bulletin_extracts, checkpoint_1, con):
         FROM bronze.bulletin GROUP BY ALL ORDER BY epi_week
         """
     ).pl()
-    bronze_bulletin
+    _report = table_snapshot(
+        con,
+        "bronze.bulletin",
+        "checked",
+        "La suma de entidades coincide con el Total de cada uno de los dos boletines.",
+    )
+    publish_flow(set_flow, {"bronze.bulletin": _report})
+    mo.vstack([table_card("bronze.bulletin", _report), bronze_bulletin])
     return (bronze_bulletin,)
 
 
@@ -627,7 +852,8 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(con, path):
+def _(con, path, set_flow):
+    publish_flow(set_flow, {}, invalidate=("bronze.sivigila", "bronze.divipola"))
     con.execute(
         "CREATE OR REPLACE TABLE bronze.sivigila AS SELECT * FROM read_csv(?, all_varchar = true)",
         [str(path("sivigila"))],
@@ -644,7 +870,25 @@ def _(con, path):
         LIMIT 6
         """
     ).pl()
-    bronze_sivigila
+    _reports = {
+        table: table_snapshot(con, table) for table in ("bronze.sivigila", "bronze.divipola")
+    }
+    publish_flow(set_flow, _reports)
+    mo.vstack(
+        [
+            table_card("bronze.sivigila", _reports["bronze.sivigila"]),
+            bronze_sivigila,
+            mo.accordion(
+                {
+                    "Referencia cargada: DIVIPOLA": table_card(
+                        "bronze.divipola",
+                        _reports["bronze.divipola"],
+                        preview=True,
+                    )
+                }
+            ),
+        ]
+    )
     return (bronze_sivigila,)
 
 
@@ -715,7 +959,8 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(bronze_sivigila, con, notification_date_format):
+def _(bronze_sivigila, con, notification_date_format, set_flow):
+    publish_flow(set_flow, {}, invalidate=("silver.cases",))
     mo.stop(bronze_sivigila is None)
     try:
         con.execute(
@@ -735,6 +980,7 @@ def _(bronze_sivigila, con, notification_date_format):
                 cod_eve AS event_code,
                 ajuste AS adjustment
             FROM bronze.sivigila
+            ORDER BY rowid
             """,
             [notification_date_format],
         ).fetchall()
@@ -764,7 +1010,7 @@ def _(bronze_sivigila, con, notification_date_format):
 
 
 @app.cell(hide_code=True)
-def _(cases_by_department, con, date_format_error, notification_date_format):
+def _(cases_by_department, con, date_format_error, notification_date_format, set_flow):
     _complete = bool(
         cases_by_department is not None
         and not cases_by_department.is_empty()
@@ -820,16 +1066,53 @@ def _(cases_by_department, con, date_format_error, notification_date_format):
             "semana ni caer en otro año. ¿Qué código representa el **mes** en `2/12/2024`? "
             "Revisa el TODO 1."
         )
-    mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger")
+    _report = (
+        table_snapshot(con, "silver.cases", "checked" if checkpoint_2 else "warning", _message)
+        if date_format_error is None
+        else {"status": "error", "rows": None, "detail": _message}
+    )
+    publish_flow(set_flow, {"silver.cases": _report})
+    mo.vstack(
+        [
+            table_card("silver.cases", _report),
+            mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger"),
+        ]
+    )
     return (checkpoint_2,)
 
 
 @app.cell(hide_code=True)
-def _(checkpoint_2, con, path):
-    mo.stop(
-        not checkpoint_2,
-        mo.md("⏳ *Completa el TODO 1; tienes una solución para continuar en su ayuda.*"),
+def _(cases_by_department, con, date_format_error):
+    mo.stop(cases_by_department is None or date_format_error is not None)
+    # The projection above preserves every row in rowid order. Compare the actual
+    # stored result with its input, including a student's incorrect conversion.
+    date_comparison = con.sql(
+        """
+        SELECT b.fec_not AS "Antes: fec_not",
+               s.notification_date AS "Después: notification_date"
+        FROM bronze.sivigila AS b
+        JOIN silver.cases AS s ON b.rowid = s.rowid
+        ORDER BY b.rowid LIMIT 4
+        """,
+    ).pl()
+    mo.vstack(
+        [
+            mo.md(
+                "**Antes y después · la misma fecha.** Cambia el tipo y su interpretación; "
+                "seguimos teniendo una fila por caso. Un valor vacío indica que esa fecha no se convirtió."
+            ),
+            mo.ui.table(date_comparison, selection=None, show_data_types=True),
+        ]
     )
+    return (date_comparison,)
+
+
+@app.cell(hide_code=True)
+def _(bronze_sivigila, con, path, set_flow):
+    # The territorial references do not need the dates, so they load before TODO 1.
+    # bronze_sivigila also signals that the shared DIVIPOLA reference is available.
+    publish_flow(set_flow, {}, invalidate=("bronze.entities",))
+    mo.stop(bronze_sivigila is None)
     con.execute(
         "CREATE OR REPLACE TABLE bronze.entities AS SELECT * FROM read_csv(?, all_varchar = true)",
         [str(path("entities"))],
@@ -841,8 +1124,26 @@ def _(checkpoint_2, con, path):
         SELECT d.cod_mpio AS municipality_code, coalesce(dist.entidad_territorial, dep.entidad_territorial) AS territorial_entity
         FROM bronze.divipola AS d
         LEFT JOIN bronze.entities AS dist ON d.cod_mpio = dist.cod_mpio
-        LEFT JOIN bronze.entities AS dep ON d.cod_dpto = dep.cod_dpto AND dep.tipo = 'departamento';
+        LEFT JOIN bronze.entities AS dep ON d.cod_dpto = dep.cod_dpto AND dep.tipo = 'departamento'
+        """
+    )
+    entity_reports = {
+        table: table_snapshot(con, table)
+        for table in ("bronze.entities", "silver.municipality_entity")
+    }
+    publish_flow(set_flow, entity_reports)
+    return (entity_reports,)
 
+
+@app.cell(hide_code=True)
+def _(checkpoint_2, con, entity_reports, set_flow):
+    publish_flow(set_flow, {}, invalidate=("silver.weekly_cases",))
+    mo.stop(
+        not checkpoint_2,
+        mo.md("⏳ *Completa el TODO 1; tienes una solución para continuar en su ayuda.*"),
+    )
+    con.execute(
+        """
         -- Pilot assumptions (see RETOS.md): dengue (210) and severe dengue (220),
         -- excluding discarded cases (6) and data-entry errors (D). The real INS downloads
         -- contain neither (adjustment is 0, 3, 5 or 7); keep the filter as a safeguard.
@@ -865,7 +1166,33 @@ def _(checkpoint_2, con, path):
         ON epi_year USING sum(cases) ORDER BY territorial_entity
         """
     ).pl()
-    weekly_cases_summary
+    _report = table_snapshot(con, "silver.weekly_cases")
+    publish_flow(set_flow, {"silver.weekly_cases": _report})
+    mo.vstack(
+        [
+            table_card("silver.weekly_cases", _report),
+            mo.md(
+                "**Cambio de unidad:** casos individuales → entidad × semana. "
+                "El número de filas baja porque agrupamos; la columna `cases` conserva el conteo. "
+                "La vista siguiente resume esos conteos por año."
+            ),
+            weekly_cases_summary,
+            mo.accordion(
+                {
+                    "Cómo se asigna cada municipio a una entidad": table_card(
+                        "silver.municipality_entity",
+                        entity_reports["silver.municipality_entity"],
+                        preview=True,
+                    ),
+                    "Referencia cargada: entidades del piloto": table_card(
+                        "bronze.entities",
+                        entity_reports["bronze.entities"],
+                        preview=True,
+                    ),
+                }
+            ),
+        ]
+    )
     return (weekly_cases_summary,)
 
 
@@ -930,7 +1257,8 @@ def _(api_button):
 
 
 @app.cell(hide_code=True)
-def _(con, path):
+def _(con, path, set_flow):
+    publish_flow(set_flow, {}, invalidate=("bronze.ideam", "bronze.alias"))
     con.execute(
         "CREATE OR REPLACE TABLE bronze.ideam AS SELECT * FROM read_parquet(?)",
         [str(path("ideam"))],
@@ -946,7 +1274,23 @@ def _(con, path):
         FROM bronze.ideam GROUP BY ALL ORDER BY start_date
         """
     ).pl()
-    ideam_names
+    _reports = {table: table_snapshot(con, table) for table in ("bronze.ideam", "bronze.alias")}
+    publish_flow(set_flow, _reports)
+    mo.vstack(
+        [
+            table_card("bronze.ideam", _reports["bronze.ideam"]),
+            ideam_names,
+            mo.accordion(
+                {
+                    "Referencia cargada: alias municipales": table_card(
+                        "bronze.alias",
+                        _reports["bronze.alias"],
+                        preview=True,
+                    )
+                }
+            ),
+        ]
+    )
     return (ideam_names,)
 
 
@@ -985,8 +1329,10 @@ def _(con, ideam_names):
 
 
 @app.cell(hide_code=True)
-def _(con, macros_ready, use_aliases):
-    mo.stop(not macros_ready)
+def _(bronze_sivigila, con, macros_ready, set_flow, use_aliases):
+    # bronze_sivigila also signals that the shared DIVIPOLA reference is available.
+    publish_flow(set_flow, {}, invalidate=("silver.daily_rainfall",))
+    mo.stop(not macros_ready or bronze_sivigila is None)
     _use_aliases = "TRUE" if use_aliases.value else "FALSE"
     con.execute(
         f"""
@@ -1020,13 +1366,43 @@ def _(con, macros_ready, use_aliases):
         FROM silver.daily_rainfall WHERE municipality_code IS NULL GROUP BY ALL ORDER BY days DESC
         """
     ).pl()
+    location_comparison = con.sql(
+        """
+        SELECT DISTINCT b.municipio AS "Antes: municipio IDEAM",
+               s.municipality_code AS "Después: código DIVIPOLA",
+               d.nom_mpio AS "Nombre de referencia"
+        FROM bronze.ideam AS b
+        JOIN silver.daily_rainfall AS s
+          ON b.codigoestacion = s.station_code
+         AND CAST(b.fecha[:10] AS DATE) = s.observation_date
+        LEFT JOIN bronze.divipola AS d ON s.municipality_code = d.cod_mpio
+        WHERE normalize(b.municipio) IN ('CALI', 'BUGA')
+        ORDER BY 1
+        """,
+    ).pl()
+    _matched = missing_municipalities.is_empty()
+    _report = table_snapshot(
+        con,
+        "silver.daily_rainfall",
+        "checked" if _matched else "warning",
+        "Todas las estaciones tienen municipio. Las lecturas sospechosas siguen incluidas."
+        if _matched
+        else "Hay estaciones sin municipio; revisa los alias antes de agregar.",
+    )
+    publish_flow(set_flow, {"silver.daily_rainfall": _report})
     mo.vstack(
         [
+            table_card("silver.daily_rainfall", _report),
             mo.md(
                 "**👀 Demostración de alias:** vienen activados. Desactívalos para ver "
                 "qué estaciones pierden su municipio y vuelve a activarlos antes del TODO 2."
             ),
             use_aliases,
+            mo.md(
+                "**Antes y después · la ubicación.** La fila sigue siendo estación × día. "
+                "El código permite relacionarla con las otras fuentes; no reemplaza el nombre original."
+            ),
+            mo.ui.table(location_comparison, selection=None),
             mo.callout(mo.md("✅ Todas las estaciones encontraron su municipio."), kind="success")
             if missing_municipalities.is_empty()
             else mo.vstack(
@@ -1044,7 +1420,7 @@ def _(con, macros_ready, use_aliases):
             ),
         ]
     )
-    return (missing_municipalities,)
+    return location_comparison, missing_municipalities
 
 
 @app.cell(hide_code=True)
@@ -1074,8 +1450,10 @@ def _(con, macros_ready):
 
 
 @app.cell(hide_code=True)
-def _(weekly_cases_summary, con, missing_municipalities):
-    mo.stop(weekly_cases_summary is None or missing_municipalities is None)
+def _(con, entity_reports, missing_municipalities, set_flow):
+    # Like the map, this waits only for its inputs: the rainfall route does not need TODO 1.
+    publish_flow(set_flow, {}, invalidate=("silver.entity_daily_rainfall",))
+    mo.stop(missing_municipalities is None or "silver.municipality_entity" not in entity_reports)
     con.execute(
         """
         CREATE OR REPLACE TABLE silver.entity_daily_rainfall AS
@@ -1085,12 +1463,36 @@ def _(weekly_cases_summary, con, missing_municipalities):
         """
     )
     entity_rainfall_ready = True
+    _before = con.sql("SELECT count(*) FROM silver.daily_rainfall").fetchall()[0][0]
+    _unmatched = ", ".join(
+        f"`{_name}`" for _name in missing_municipalities["municipality"].unique(maintain_order=True)
+    )
+    _report = table_snapshot(
+        con,
+        "silver.entity_daily_rainfall",
+        "created" if missing_municipalities.is_empty() else "warning",
+        "Se conserva el detalle diario de las estaciones que encuentran entidad."
+        if missing_municipalities.is_empty()
+        else f"{missing_municipalities['stations'].sum():,} estaciones sin municipio ({_unmatched}) "
+        "no encuentran entidad y quedan fuera de esta tabla. Activa los alias en la sección 5.",
+    )
+    publish_flow(set_flow, {"silver.entity_daily_rainfall": _report})
+    mo.vstack(
+        [
+            table_card("silver.entity_daily_rainfall", _report),
+            mo.md(
+                f"**Antes: {_before:,} filas → después: {_report['rows']:,} filas.** "
+                "Añadir la entidad no agrega los días. Las estaciones sin municipio "
+                "quedan fuera de este cruce: esa pérdida debe explicarse."
+            ),
+        ]
+    )
     return (entity_rainfall_ready,)
 
 
 @app.cell(hide_code=True)
-def _(con, entity_rainfall_ready):
-    mo.stop(not entity_rainfall_ready)
+def _(con, entity_rainfall_ready, weekly_cases_summary):
+    mo.stop(not entity_rainfall_ready or weekly_cases_summary is None)
     prediction = mo.ui.number(
         start=0, stop=10_000_000, step=1, value=0, label="Mi predicción (filas)"
     )
@@ -1159,11 +1561,9 @@ def _():
 
 
 @app.cell
-def _(con, entity_rainfall_ready):
-    mo.stop(not entity_rainfall_ready)
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE silver.weekly_rainfall AS
+def _():
+    # The next cell saves the result of this query as silver.weekly_rainfall.
+    weekly_rainfall_query = """
         WITH per_station AS (
             -- First, total weekly rainfall for each station...
             SELECT territorial_entity, station_code,
@@ -1183,10 +1583,142 @@ def _(con, entity_rainfall_ready):
                count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
-        """
-    ).fetchall()
-    weekly_rainfall_ready = True
+    """
+    return (weekly_rainfall_query,)
+
+
+@app.cell(hide_code=True)
+def _(con, entity_rainfall_ready, set_flow, weekly_rainfall_query):
+    # Keep the map bookkeeping out of the editable cell: participants only touch the SQL.
+    publish_flow(set_flow, {}, invalidate=("silver.weekly_rainfall",))
+    mo.stop(not entity_rainfall_ready)
+    try:
+        con.execute(
+            f"CREATE OR REPLACE TABLE silver.weekly_rainfall AS {weekly_rainfall_query}"
+        ).fetchall()
+    except duckdb.Error as _error:
+        # Like TODO 1, turn a broken query into a hint instead of a traceback.
+        weekly_rainfall_ready = False
+        _message = (
+            "❌ **TODO 2 pendiente:** DuckDB no pudo ejecutar tu consulta. Revisa el último "
+            "cambio; la ayuda incluye una solución para continuar.\n\n"
+            f"Detalle de DuckDB: `{str(_error).splitlines()[0]}`"
+        )
+        _detail = "La consulta del TODO 2 no se ejecutó; lee el mensaje de DuckDB de arriba."
+        publish_flow(
+            set_flow,
+            {"silver.weekly_rainfall": {"status": "error", "rows": None, "detail": _detail}},
+        )
+        _output = mo.callout(mo.md(_message), kind="danger")
+    else:
+        weekly_rainfall_ready = True
+        publish_flow(
+            set_flow,
+            {
+                "silver.weekly_rainfall": table_snapshot(
+                    con,
+                    "silver.weekly_rainfall",
+                    detail="Tabla creada. La comparación por entidad y semana comprobará el cálculo más abajo.",
+                )
+            },
+        )
+        _output = None
+    _output
     return (weekly_rainfall_ready,)
+
+
+@app.cell(hide_code=True)
+def _(get_flow):
+    table_card("silver.weekly_rainfall", get_flow().get("silver.weekly_rainfall"))
+    return
+
+
+@app.cell(hide_code=True)
+def _(con, weekly_rainfall_ready):
+    mo.stop(not weekly_rainfall_ready)
+    # A CTE cannot be read outside its query, so this repeats the template's first step.
+    # The panel flags a result that these station totals cannot explain, for example after
+    # a participant edits per_station instead of the final SELECT.
+    _stations = con.sql(
+        """
+        SELECT territorial_entity, station_code,
+               epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,
+               sum(precipitation_mm) AS mm
+        FROM silver.entity_daily_rainfall
+        GROUP BY ALL
+        """,
+    ).pl()
+    _keys = ["territorial_entity", "epi_year", "epi_week"]
+    _examples = _stations.group_by(_keys).len().filter(pl.col("len") > 1).sort(["len", *_keys])
+    mo.stop(_examples.is_empty(), mo.md("No hay una semana con varias estaciones para comparar."))
+    _entity, _year, _week = _examples.select(_keys).row(0)
+    _selection = (
+        (pl.col("territorial_entity") == _entity)
+        & (pl.col("epi_year") == _year)
+        & (pl.col("epi_week") == _week)
+    )
+    station_week_example = _stations.filter(_selection).sort("station_code")
+    rainfall_week_example = con.sql("SELECT * FROM silver.weekly_rainfall").pl().filter(_selection)
+    _totals = station_week_example["mm"].cast(pl.Float64)
+    _results = rainfall_week_example["mean_precipitation_mm"].cast(pl.Float64)
+    _value = _results[0] if _results.len() == 1 else None
+    # Any usual combination of these totals means the query started from them.
+    _candidates = (
+        _totals.sum(),
+        _totals.mean(),
+        _totals.median(),
+        _totals.min(),
+        _totals.max(),
+        _totals.len(),
+    )
+    per_station_mismatch = _value is not None and all(
+        _candidate is None or abs(_value - _candidate) > 0.01 for _candidate in _candidates
+    )
+    _mismatch_note = (
+        mo.callout(
+            mo.md(
+                f"⚠️ **Tu resultado ({_value:,.2f} mm) no sale de combinar estos totales.** "
+                "Esta tabla repite el primer paso de la plantilla, `sum(precipitation_mm)`. "
+                "Si cambiaste `per_station`, tu consulta partió de otros valores: restaura "
+                "esa suma y edita solo el SELECT final."
+            ),
+            kind="warn",
+        )
+        if per_station_mismatch
+        else None
+    )
+    mo.accordion(
+        {
+            "Seguir una semana real: de estaciones a entidad"
+            + (" · ⚠️ revisa el primer paso" if per_station_mismatch else ""): mo.vstack(
+                [
+                    mo.md(
+                        f"**{_entity}, {_year}, semana {_week}.** Estas son todas las estaciones "
+                        "con datos para esta combinación. Observa qué representa una fila en cada paso."
+                    ),
+                    mo.mermaid("""
+                flowchart LR
+                  D["Estación × día"] -->|"sumar días"| P["per_station<br/>Estación × semana"]
+                  P -->|"combinar estaciones"| E["silver.weekly_rainfall<br/>Entidad × semana"]
+                  style P stroke-dasharray: 5 4
+            """),
+                    mo.md(
+                        "**Paso intermedio: `per_station`.** Es una CTE: existe solo dentro de la "
+                        "consulta, así que aquí repetimos el primer paso de la plantilla, "
+                        "`sum(precipitation_mm)`. Cada valor es el total semanal de una estación."
+                    ),
+                    mo.ui.table(station_week_example, selection=None),
+                    mo.md(
+                        "**Después: el resultado de tu agregación.** La estructura puede ser correcta "
+                        "aunque la cifra todavía necesite corregirse."
+                    ),
+                    mo.ui.table(rainfall_week_example, selection=None),
+                    *([_mismatch_note] if _mismatch_note is not None else []),
+                ]
+            ),
+        }
+    )
+    return per_station_mismatch, rainfall_week_example, station_week_example
 
 
 @app.cell(hide_code=True)
@@ -1215,8 +1747,24 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(bronze_bulletin, con, weekly_rainfall_ready):
-    mo.stop(not weekly_rainfall_ready or bronze_bulletin is None)
+def _(checkpoint_2):
+    # The rainfall route runs before TODO 1; integration and the TODO 2 check need the cases.
+    mo.stop(checkpoint_2)
+    mo.callout(
+        mo.md(
+            "⏳ **La integración espera el TODO 1.** `gold.signal` necesita los casos semanales "
+            "y la comprobación del TODO 2 usa esa tabla. Puedes preparar el TODO 2; su "
+            "comprobación aparecerá cuando completes el TODO 1 (su ayuda tiene una solución)."
+        ),
+        kind="info",
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(bronze_bulletin, con, set_flow, weekly_cases_summary, weekly_rainfall_ready):
+    publish_flow(set_flow, {}, invalidate=("gold.signal",))
+    mo.stop(not weekly_rainfall_ready or bronze_bulletin is None or weekly_cases_summary is None)
     con.execute(
         """
         CREATE OR REPLACE TABLE gold.signal AS
@@ -1287,8 +1835,33 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
         """
     )
     gold = con.sql("SELECT * FROM gold.signal").pl()
+    publish_flow(
+        set_flow,
+        {
+            "gold.signal": table_snapshot(
+                con,
+                "gold.signal",
+                detail="Integración ejecutada; se comprueban estructura y valores a continuación.",
+            )
+        },
+    )
     gold
     return (gold,)
+
+
+@app.cell(hide_code=True)
+def _(get_flow):
+    mo.vstack(
+        [
+            table_card("gold.signal", get_flow().get("gold.signal")),
+            mo.md(
+                "**El calendario también aporta filas.** Oro conserva cada entidad × semana aunque "
+                "una fuente no tenga observaciones. Más filas aquí no significa más casos. "
+                "Un acumulado del boletín y un conteo semanal de SIVIGILA mantienen columnas distintas."
+            ),
+        ]
+    )
+    return
 
 
 @app.cell(hide_code=True)
@@ -1341,7 +1914,7 @@ def _(con, gold):
 
 
 @app.cell(hide_code=True)
-def _(final_gold, gold):
+def _(checkpoint_3, con, final_gold, gold, missing_municipalities, set_flow):
     # Validate every entity-week, not just entity summaries that can hide offsetting errors.
     # This cell does not wait for the structure check, so the summary in section 8 always
     # gets a TODO 2 status; the next cell shows the comparison once the structure is right.
@@ -1380,6 +1953,33 @@ def _(final_gold, gold):
             pl.col(f"{_column}_repo").alias(f"repo_{_column}"),
         ]
     gold_differences = _weekly.filter(_mask).select(*_keys, *_shown).sort(_keys)
+    _rain_detail = (
+        "Lluvia y estaciones coinciden con la tabla oficial en cada entidad y semana."
+        if aggregation_ok
+        else "Hay estaciones sin municipio: activa los alias antes de evaluar la agregación."
+        if not missing_municipalities.is_empty()
+        else "Lluvia o estaciones difieren de la tabla oficial; revisa la agregación del TODO 2."
+    )
+    publish_flow(
+        set_flow,
+        {
+            "silver.weekly_rainfall": table_snapshot(
+                con,
+                "silver.weekly_rainfall",
+                "checked" if aggregation_ok else "warning",
+                _rain_detail,
+            ),
+            "gold.signal": table_snapshot(
+                con,
+                "gold.signal",
+                "checked" if checkpoint_3 and gold_matches_repo else "warning",
+                "Estructura y comparación de casos, lluvia y estaciones aprobadas. "
+                "Esta comparación no valida todas las columnas."
+                if checkpoint_3 and gold_matches_repo
+                else "Revisa los controles de estructura y la comparación de valores que aparecen abajo.",
+            ),
+        },
+    )
     return aggregation_ok, cases_match, gold_differences, gold_matches_repo, gold_mismatches
 
 
@@ -1696,8 +2296,8 @@ def progress_summary(todo1_ok: bool, todo2_ok: bool) -> mo.Html:
 
 @app.cell(hide_code=True)
 def _(checkpoint_2):
-    # Every cell after TODO 1 waits for it, the next summary cell included, so this cell
-    # shows the progress until TODO 1 passes.
+    # The next summary cell needs gold, which waits for TODO 1, so this cell shows the
+    # progress until TODO 1 passes.
     mo.stop(checkpoint_2)
     progress_summary(todo1_ok=False, todo2_ok=False)
     return
@@ -1707,6 +2307,352 @@ def _(checkpoint_2):
 def _(aggregation_ok, checkpoint_2, checkpoint_3):
     progress_summary(todo1_ok=checkpoint_2, todo2_ok=checkpoint_3 and aggregation_ok)
     return
+
+
+@app.function(hide_code=True)
+def publish_flow(
+    setter: Callable[..., None],
+    reports: dict[str, dict[str, Any]],
+    invalidate: tuple[str, ...] = (),
+) -> None:
+    """Publish immutable display snapshots; never expose stale descendants after an edit."""
+
+    def update(current: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        outdated = set(invalidate)
+        while True:
+            downstream = {
+                name
+                for name, guide in TABLE_GUIDE.items()
+                if any(source in outdated for source in guide.sources)
+            }
+            if downstream <= outdated:
+                break
+            outdated |= downstream
+        return {
+            **{name: value for name, value in current.items() if name not in outdated},
+            **reports,
+        }
+
+    setter(update)
+
+
+@app.function(hide_code=True)
+def table_snapshot(
+    connection: duckdb.DuckDBPyConnection,
+    table: str,
+    status: str = "created",
+    detail: str = "La carga se ejecutó; el conteo describe el resultado, no certifica su calidad.",
+) -> dict[str, Any]:
+    """Read a small, independent snapshot of a known notebook table."""
+    if table not in TABLE_GUIDE:
+        raise ValueError(f"Unknown workshop table: {table}")
+    sample = connection.sql(f"SELECT * FROM {table} LIMIT 5").pl()
+    return {
+        "rows": connection.sql(f"SELECT count(*) FROM {table}").fetchall()[0][0],
+        "columns": sample.width,
+        "sample": sample,
+        "status": status,
+        "detail": detail,
+    }
+
+
+@app.function(hide_code=True)
+def table_card(table: str, report: dict[str, Any] | None, *, preview: bool = False) -> mo.Html:
+    """Explain a transformation using the same catalog as the map and its popovers."""
+    guide = TABLE_GUIDE[table]
+    steps = " → ".join(
+        f"**{step} (aquí)**" if index == guide.step else step
+        for index, step in enumerate(FLOW_STEPS)
+    )
+    sources = " + ".join(f"`{source}`" for source in guide.sources)
+    layer = {"bronze": "Bronce", "silver": "Plata", "gold": "Oro"}[table.split(".")[0]]
+    status = FLOW_STATUS[report["status"]] if report else "⏳ Pendiente de sus entradas"
+    dimensions = (
+        f" · {report['rows']:,} filas · {report['columns']} columnas"
+        if report and report.get("rows") is not None
+        else ""
+    )
+    content = [
+        mo.md(
+            f"{steps}\n\n"
+            f"### `{table}`\n\n"
+            f"**{layer} · {status}**{dimensions}\n\n"
+            f"**Una fila representa:** {guide.grain}\n\n"
+            f"**Proviene de:** {sources}\n\n"
+            f"**Cómo:** {guide.operation}\n\n"
+            f"**Para qué:** {guide.purpose}"
+        )
+    ]
+    if report:
+        content.append(mo.md(f"**Comprobación:** {report['detail']}"))
+    if preview and report and report.get("sample") is not None:
+        content.append(
+            mo.md("Muestra de hasta cinco filas; los tipos aparecen bajo los nombres de columna.")
+        )
+        content.append(mo.ui.table(report["sample"], selection=None, show_data_types=True))
+    return mo.vstack(content, gap=0.5)
+
+
+@app.function(hide_code=True)
+def flow_diagram(
+    reports: dict[str, dict[str, Any]], cards: dict[str, mo.Html], focus: str | None = None
+) -> mo.Html:
+    """Render complete lineage in layer columns, with named gold inputs and directional focus."""
+    if focus is not None and focus not in TABLE_GUIDE:
+        raise ValueError(f"Unknown workshop table: {focus}")
+    # Keep all tables in one map. Silver's internal dependencies run between its rows.
+    positions = {
+        "bronze.sivigila": (16, 100, "Fuente · casos"),
+        "bronze.divipola": (16, 220, "Referencia · municipios"),
+        "bronze.entities": (16, 340, "Referencia · entidades"),
+        "bronze.alias": (16, 460, "Referencia · equivalencias"),
+        "bronze.ideam": (16, 580, "Fuente · lluvia"),
+        "bronze.bulletin": (16, 700, "Fuente · acumulados"),
+        "silver.cases": (272, 100, "Tipar fechas y códigos"),
+        "silver.municipality_entity": (272, 220, "Asignar entidad al municipio"),
+        "silver.weekly_cases": (272, 340, "Contar casos por semana"),
+        "silver.daily_rainfall": (272, 460, "Tipar y ubicar estaciones"),
+        "silver.entity_daily_rainfall": (272, 580, "Asignar entidad a la lluvia"),
+        "silver.weekly_rainfall": (272, 700, "Agregar lluvia por semana"),
+        "gold.signal": (536, 82, "Integrar las siete entradas"),
+    }
+    # Each gold input ends at its own labeled port, rather than sharing an ambiguous bus.
+    gold_inputs = {
+        # silver.cases only marks the years SIVIGILA covers: there, a week without cases is 0.
+        "silver.cases": (202, "Cobertura de SIVIGILA"),
+        "bronze.entities": (324, "Entidades del calendario"),
+        "silver.weekly_cases": (378, "Casos por semana"),
+        "silver.daily_rainfall": (498, "Límite del calendario"),
+        "silver.entity_daily_rainfall": (618, "Días sospechosos"),
+        "bronze.bulletin": (684, "Acumulados del boletín"),
+        "silver.weekly_rainfall": (738, "Lluvia por semana"),
+    }
+    paths = {
+        ("bronze.sivigila", "silver.cases"): "M220 144 H272",
+        ("bronze.divipola", "silver.municipality_entity"): "M220 252 H272",
+        ("bronze.entities", "silver.municipality_entity"): "M220 368 H238 V276 H272",
+        ("bronze.divipola", "silver.daily_rainfall"): "M220 288 H248 V478 H272",
+        ("bronze.alias", "silver.daily_rainfall"): "M220 498 H272",
+        ("bronze.ideam", "silver.daily_rainfall"): "M220 618 H258 V516 H272",
+        ("silver.cases", "silver.weekly_cases"): "M374 188 V204 H490 V366 H476",
+        ("silver.municipality_entity", "silver.weekly_cases"): "M374 308 V340",
+        ("silver.municipality_entity", "silver.entity_daily_rainfall"): "M476 258 H508 V608 H476",
+        ("silver.daily_rainfall", "silver.entity_daily_rainfall"): "M374 548 V580",
+        ("silver.entity_daily_rainfall", "silver.weekly_rainfall"): "M374 668 V700",
+        ("silver.cases", "gold.signal"): "M476 122 H522 V202 H536",
+        ("bronze.entities", "gold.signal"): "M220 392 H230 V324 H536",
+        ("silver.weekly_cases", "gold.signal"): "M476 378 H536",
+        ("silver.daily_rainfall", "gold.signal"): "M476 498 H536",
+        ("silver.entity_daily_rainfall", "gold.signal"): "M476 618 H536",
+        ("bronze.bulletin", "gold.signal"): "M220 738 H240 V684 H536",
+        ("silver.weekly_rainfall", "gold.signal"): "M476 738 H536",
+    }
+    reference_tables = {
+        "bronze.divipola",
+        "bronze.alias",
+        "bronze.entities",
+        "silver.municipality_entity",
+    }
+    gold_measures = {"silver.weekly_cases", "silver.weekly_rainfall", "bronze.bulletin"}
+    edges = [
+        (source, table)
+        for table, guide in TABLE_GUIDE.items()
+        for source in guide.sources
+        if source in TABLE_GUIDE
+    ]
+    styles = """
+        .dengue-lineage { overflow-x:auto; max-width:100%; border:1px solid #dbe1e7;
+            border-radius:8px; background:#fff; }
+        .dengue-canvas { position:relative; width:760px; height:824px; color:#172333; }
+        .dengue-band { position:absolute; top:84px; height:716px; width:228px; border-radius:8px; }
+        .dengue-edges { position:absolute; inset:0; width:760px; height:824px; }
+        .dengue-link { --edge-color:#7c8b9d; --edge-arrow:url(#dengue-arrow); --edge-width:1.8; }
+        .dengue-edge, .dengue-halo { fill:none; stroke-linejoin:round; stroke-linecap:round; }
+        .dengue-edge { stroke:var(--edge-color); stroke-width:var(--edge-width);
+            marker-end:var(--edge-arrow); }
+        .dengue-halo { stroke:white; stroke-width:5; }
+        .dengue-link[data-kind="support"] .dengue-edge { stroke-dasharray:5 4; }
+        .dengue-link[data-relation="context"] { opacity:.12; }
+        .dengue-link[data-relation="incoming"] { --edge-color:#1d4ed8;
+            --edge-arrow:url(#dengue-arrow-in); --edge-width:2.8; }
+        .dengue-link[data-relation="outgoing"] { --edge-color:#087f5b;
+            --edge-arrow:url(#dengue-arrow-out); --edge-width:2.8; }
+        .dengue-layer { position:absolute; top:16px; width:208px; font-size:18px;
+            font-weight:650; color:#172333; }
+        .dengue-layer small { display:block; font-size:11px; font-weight:400;
+            line-height:18px; color:#526172; }
+        .dengue-layer-arrow { position:absolute; top:20px; font-size:20px; color:#526172; }
+        .dengue-node { position:absolute; width:204px; height:88px; box-sizing:border-box;
+            display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
+            gap:2px; padding:8px 10px; border:1.5px solid; border-radius:6px; cursor:pointer;
+            text-align:left; color:#172333; font-family:inherit; }
+        .dengue-node[data-layer="bronze"] { background:#f4dfc5; border-color:#93612c; }
+        .dengue-node[data-layer="silver"] { background:#e8edf2; border-color:#637487; }
+        .dengue-node[data-layer="gold"] { background:#fff0ac; border-color:#a68312; }
+        .dengue-node[data-layer="gold"] { width:208px; height:724px; display:block;
+            padding:14px 12px; background:#fff7ce; }
+        .dengue-node[data-layer="gold"] > span { display:block; margin-bottom:3px; }
+        .dengue-node[data-selected="true"] { outline:3px solid #1d4ed8; outline-offset:2px; }
+        .dengue-node[data-status="pending"], .dengue-node[data-status="error"] {
+            border-style:dashed; }
+        .dengue-trigger { position:absolute; inset:0; width:100%; height:100%; padding:0;
+            border:0; border-radius:inherit; background:transparent; cursor:pointer; z-index:1; }
+        .dengue-node:hover, .dengue-node:has(.dengue-trigger:focus-visible) {
+            outline:3px solid #2563eb;
+            outline-offset:2px; }
+        .dengue-trigger:focus-visible { outline:none; }
+        .dengue-schema { font-size:11px; line-height:14px; }
+        .dengue-name { font-size:13px; line-height:17px; font-family:monospace; font-weight:600; }
+        .dengue-purpose { font-size:11px; line-height:16px; color:#445365; margin-top:3px; }
+        .dengue-status { font-size:11px; line-height:16px; }
+        .dengue-gold-input { position:absolute; left:12px; right:6px; font-size:12px;
+            line-height:18px; color:#51451f; }
+        .dengue-gold-input code { display:block; font-size:10.5px; color:#66582d;
+            font-family:monospace; }
+        .dengue-gold-grain { position:absolute; bottom:12px; left:12px; right:12px;
+            border-top:1px solid #dfcf89; padding-top:8px; font-size:11px;
+            line-height:16px; color:#51451f; }
+        .dengue-legend { display:flex; flex-wrap:wrap; gap:8px 20px; padding:12px 16px;
+            border-top:1px solid #dbe1e7; font-size:12px; color:#445365; }
+        .dengue-legend span { display:inline-flex; align-items:center; gap:6px; }
+        .dengue-legend-line { display:inline-block; width:24px; border-top:2px solid #7c8b9d; }
+        .dengue-legend-line.support { border-top-style:dashed; }
+        .dengue-legend .incoming { color:#1d4ed8; }
+        .dengue-legend .outgoing { color:#087f5b; }
+        .dengue-card { width:min(720px, calc(100vw - 32px)); max-height:82vh; overflow:auto;
+            position:fixed; inset:0; margin:auto;
+            box-sizing:border-box; padding:24px; border:1px solid #8996a5; border-radius:10px;
+            background:white; color:#172333; box-shadow:0 16px 60px #17233333; }
+        .dengue-card::backdrop { background:#17233333; }
+        .dengue-card .markdown { display:block; }
+        .dengue-card .paragraph { display:block; margin:0 0 10px; }
+        .dengue-card h3 { margin:12px 0; }
+        .dengue-card-header { display:flex; justify-content:space-between; align-items:center;
+            gap:16px; margin-bottom:16px; font-size:13px; color:#445365;
+            position:sticky; top:-24px; padding:8px 0; background:white; z-index:1; }
+        .dengue-close { background:#f1f4f7; color:#172333; border:1px solid #8996a5;
+            border-radius:5px; padding:5px 12px; cursor:pointer; font:inherit; }
+        .dengue-close:focus-visible { outline:3px solid #2563eb; outline-offset:2px; }
+    """
+    # A persistent selection works on touch screens; free exploration uses hover or Tab.
+    styles += (
+        '.dengue-canvas[data-focus=""]:has(.dengue-trigger:is(:hover,:focus-visible)) '
+        ".dengue-link { opacity:.12; }"
+    )
+    for table in TABLE_GUIDE:
+        selector = (
+            f'.dengue-canvas[data-focus=""]:has([data-table="{table}"]:is(:hover,:focus-visible)) '
+        )
+        styles += (
+            selector
+            + f'.dengue-link[data-target="{table}"] '
+            + (
+                "{ opacity:1; --edge-color:#1d4ed8; --edge-arrow:url(#dengue-arrow-in); --edge-width:2.8; }"
+            )
+        )
+        styles += (
+            selector
+            + f'.dengue-link[data-source="{table}"] '
+            + (
+                "{ opacity:1; --edge-color:#087f5b; --edge-arrow:url(#dengue-arrow-out); --edge-width:2.8; }"
+            )
+        )
+    svg = [
+        '<svg class="dengue-edges" viewBox="0 0 760 824" aria-hidden="true"><defs>',
+    ]
+    for suffix, color in (("", "#7c8b9d"), ("-in", "#1d4ed8"), ("-out", "#087f5b")):
+        svg.append(
+            f'<marker id="dengue-arrow{suffix}" markerWidth="8" markerHeight="8" '
+            'refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">'
+            f'<path d="M0 0 L7 4 L0 8 Z" fill="{color}"/></marker>'
+        )
+    svg.append("</defs>")
+    for source, target in edges:
+        relation = "none" if focus is None else "context"
+        if target == focus:
+            relation = "incoming"
+        elif source == focus:
+            relation = "outgoing"
+        support = source in reference_tables or (
+            target == "gold.signal" and source not in gold_measures
+        )
+        svg.append(
+            f'<g class="dengue-link" data-source="{source}" data-target="{target}" '
+            f'data-relation="{relation}" data-kind="{"support" if support else "measure"}">'
+            f'<path class="dengue-halo" d="{paths[source, target]}"/>'
+            f'<path class="dengue-edge" data-source="{source}" data-target="{target}" '
+            f'd="{paths[source, target]}">'
+            f"<title>{html.escape(source)} → {html.escape(target)}</title></path></g>"
+        )
+    svg.append("</svg>")
+    nodes = []
+    popovers = []
+    for table, (x, y, purpose) in positions.items():
+        layer, name = table.split(".")
+        report = reports.get(table)
+        status_key = report["status"] if report else "pending"
+        status_label = FLOW_STATUS[status_key] if report else "⏳ Pendiente"
+        card_id = "flow-card-" + table.replace(".", "-").replace("_", "-")
+        # marimo reserves Enter/Escape on ordinary buttons for editor shortcuts.
+        # Native input buttons are recognized as form controls and keep those keys local.
+        gold_ports = ""
+        if table == "gold.signal":
+            gold_ports = (
+                "".join(
+                    f'<span class="dengue-gold-input" data-gold-source="{source}" '
+                    f'style="top:{port_y - y - 18}px" aria-hidden="true">'
+                    f"{label}<code>{source}</code></span>"
+                    for source, (port_y, label) in gold_inputs.items()
+                )
+                + '<span class="dengue-gold-grain" aria-hidden="true">Una fila por entidad y semana</span>'
+            )
+        nodes.append(
+            '<div class="dengue-node" '
+            f'data-selected="{str(table == focus).lower()}" '
+            f'data-layer="{layer}" data-status="{status_key}" style="left:{x}px;top:{y}px" '
+            '><input type="button" value="" class="dengue-trigger" '
+            f'data-table="{table}" data-status="{status_key}" popovertarget="{card_id}" '
+            f'aria-label="Ver ficha de {table}" aria-description="{html.escape(status_label)}">'
+            f'<span class="dengue-schema" aria-hidden="true">{layer}.</span>'
+            f'<span class="dengue-name" aria-hidden="true">{name}</span>'
+            f'<span class="dengue-status" aria-hidden="true">{html.escape(status_label)}</span>'
+            f'<span class="dengue-purpose" aria-hidden="true">{purpose}</span>{gold_ports}</div>'
+        )
+        popovers.append(
+            f'<div id="{card_id}" class="dengue-card" popover="auto" role="dialog" '
+            f'aria-label="Ficha de {table}" data-status="{status_key}">'
+            '<div class="dengue-card-header"><span>Ficha de la tabla</span>'
+            f'<input type="button" class="dengue-close" popovertarget="{card_id}" '
+            'popovertargetaction="hide" value="Cerrar"></div>'
+            f"{cards[table].text}</div>"
+        )
+    labels = []
+    for layer, label, left, description in (
+        ("bronze", "Bronce", 16, "Fuentes y referencias"),
+        ("silver", "Plata", 272, "Tipos, ubicación y agregación"),
+        ("gold", "Oro", 536, "Una tabla lista para analizar"),
+    ):
+        count = sum(table.startswith(layer + ".") for table in TABLE_GUIDE)
+        labels.append(
+            f'<div class="dengue-layer" style="left:{left}px">{label}'
+            f"<small>{count} {'tabla' if count == 1 else 'tablas'} · {description}</small></div>"
+        )
+    return mo.Html(
+        f"<style>{styles}</style>"
+        '<div class="dengue-lineage" role="group" aria-label="Mapa completo de las 13 tablas">'
+        f'<div class="dengue-canvas" data-focus="{focus or ""}">'
+        '<div class="dengue-band" style="left:4px;background:#fcf8f3"></div>'
+        '<div class="dengue-band" style="left:260px;background:#f4f6f9"></div>'
+        '<span class="dengue-layer-arrow" style="left:238px" aria-hidden="true">→</span>'
+        '<span class="dengue-layer-arrow" style="left:502px" aria-hidden="true">→</span>'
+        + "".join(svg + labels)
+        + "".join(nodes)
+        + '</div><div class="dengue-legend">'
+        '<span><i class="dengue-legend-line"></i>Medidas</span>'
+        '<span><i class="dengue-legend-line support"></i>Referencias, calendario, cobertura y calidad</span>'
+        '<span class="incoming">→ Entradas a la tabla elegida</span>'
+        '<span class="outgoing">→ Salidas hacia otras tablas</span></div></div>' + "".join(popovers)
+    )
 
 
 if __name__ == "__main__":
