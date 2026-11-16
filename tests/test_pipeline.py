@@ -150,6 +150,35 @@ def test_suspicious_days_are_flagged_not_removed(ready_warehouse: Warehouse) -> 
     )
 
 
+def test_codes_exported_as_float_text_do_not_change_case_counts(
+    repo_paths: Paths, tmp_paths: Paths
+) -> None:
+    """A CSV round trip turns 210 into '210.0'; cases must still be counted and filtered."""
+    columns = ["cod_eve", "ajuste", "pac_hos", "tip_cas", "con_fin"]
+    source = pl.read_csv(tmp_paths.sivigila_pilot, infer_schema=False, encoding="utf8-lossy")
+    source.with_columns(
+        pl.when(pl.col(c).str.contains(r"^\d+$")).then(pl.col(c) + ".0").otherwise(pl.col(c))
+        for c in columns
+    ).write_csv(tmp_paths.sivigila_pilot)
+
+    summary = run_pipeline(tmp_paths)
+    assert summary.ok, [str(v) for v in summary.checks]
+
+    columns_sql = "sum(sivigila_cases), sum(sivigila_severe_cases)"
+    expected = duckdb.sql(
+        f"SELECT {columns_sql} FROM '{repo_paths.gold.as_posix()}/weekly_dengue_signal.parquet'"
+    ).fetchall()
+    con = warehouse.connect(tmp_paths.database)
+    try:
+        actual = con.sql(f"SELECT {columns_sql} FROM {quality.GOLD_TABLE}").fetchall()
+        hospitalized = _scalar(con, "SELECT sum(hospitalized) FROM silver.sivigila_weekly_cases")
+    finally:
+        con.close()
+    assert actual == expected
+    assert isinstance(hospitalized, int)
+    assert hospitalized > 0
+
+
 def test_exports_gold(ready_warehouse: Warehouse) -> None:
     paths, con = ready_warehouse
     exported = pl.read_parquet(paths.gold / "weekly_dengue_signal.parquet")

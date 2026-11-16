@@ -6,11 +6,11 @@ SELECT
     municipality_code(cod_dpto_o, cod_mun_o) AS municipality_code,
     cast(ano AS INTEGER) AS epi_year,
     cast(semana AS INTEGER) AS epi_week,
-    trim(cod_eve) AS event_code,
-    upper(trim(coalesce(ajuste, '0'))) AS adjustment,
-    trim(tip_cas) AS case_type,
-    trim(pac_hos) AS hospitalization,
-    trim(con_fin) AS final_condition,
+    clean_code(cod_eve) AS event_code,
+    upper(clean_code(coalesce(ajuste, '0'))) AS adjustment,
+    clean_code(tip_cas) AS case_type,
+    clean_code(pac_hos) AS hospitalization,
+    clean_code(con_fin) AS final_condition,
     parse_date_text(fec_not) AS notification_date,
     parse_date_text(ini_sin) AS symptom_onset_date
 FROM bronze.sivigila;
