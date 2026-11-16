@@ -72,8 +72,8 @@ Con `make` (macOS / Linux) o con el comando `uv` equivalente (Windows):
 | `make pipeline` | `uv run dengue-pipeline run` | Bronce → plata → oro, sin internet |
 | `make pipeline-online` | `uv run dengue-pipeline -v run --refresh-ideam` | Igual, descargando el IDEAM de nuevo |
 | `make lint` | ver `Makefile` | ruff, sqlfluff, mypy, marimo check |
-| `make format` | `uv run ruff format . && uv run sqlfluff fix sql` | Formatea Python y SQL |
-| `make test` | `uv run pytest --cov` | Todas las pruebas, con cobertura |
+| `make format` | `uv run ruff format . && uv run ruff check --fix . && uv run sqlfluff fix sql` | Formatea Python y SQL |
+| `make test` | `uv run pytest --cov --cov-report=term-missing` | Todas las pruebas, con cobertura |
 | `make workshop-check` | [Secuencia sin make](docs/guia_facilitador.md#ensayo-técnico-repetible) | Lint, pruebas offline incluidos notebooks y pipeline |
 | `make workshop-qr` | `uv run scripts/generate_workshop_qr.py` | Genera los QR localmente en `docs/assets/` |
 
@@ -132,7 +132,7 @@ en [`docs/arquitectura.md`](docs/arquitectura.md).
 │   ├── reference/              ← DIVIPOLA, entidades territoriales, alias de nombres
 │   └── gold/                   ← la tabla final exportada (parquet)
 ├── tests/                      ← pytest: unidades, pipeline completo y notebooks
-├── scripts/                    ← generador del notebook y de la muestra sintética
+├── scripts/                    ← generadores: notebook de participantes, muestra sintética y QR
 ├── docs/                       ← fuentes, arquitectura, diccionario, guía del facilitador
 └── RETOS.md                    ← las incógnitas para la hackathon
 ```
@@ -166,7 +166,7 @@ puedas usar como base en la hackathon:
 | [mypy](https://mypy-lang.org/) | Tipos estáticos (modo estricto) |
 | `marimo check` | Linter de notebooks |
 | [pytest](https://pytest.org/) | 125+ pruebas: unidades, pipeline completo y notebooks |
-| [pre-commit](https://pre-commit.com/) | Corre todo lo anterior antes de cada commit |
+| [pre-commit](https://pre-commit.com/) | Corre ruff, sqlfluff, `marimo check` y la sincronización del notebook antes de cada commit |
 | GitHub Actions | El mismo `make lint` + pruebas en cada push |
 
 El código, sus comentarios y los comandos están en inglés. La documentación y las
