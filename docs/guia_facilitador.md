@@ -41,8 +41,8 @@ las descargas de `REPO_URL`.
 - [x] Instalar las **76 dependencias de `uv.lock` en un entorno virtual nuevo en macOS**
       (Python 3.12.11). Esto comprueba la instalación, no equivale a un computador limpio.
 - [x] Ejecutar `make format`, `make lint` y `make test-fast`: **144 aprobadas, 1 omitida**
-      (las 22 excluidas incluyen notebooks y red).
-- [x] Ejecutar `make workshop-check`: **164 pruebas aprobadas, 1 omitida y 2 de red
+      (las 29 excluidas incluyen notebooks y red).
+- [x] Ejecutar `make workshop-check`: **171 pruebas aprobadas, 1 omitida y 2 de red
       excluidas**, cobertura del paquete **95 %**; pipeline con **750 filas** y sin errores
       críticos. El snapshot oro coincide con una ejecución nueva. La primera corrida fue en
       el entorno nuevo; después de corregir el visor PDF y la descarga oficial se repitió en
