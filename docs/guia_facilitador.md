@@ -5,6 +5,10 @@
 **Idea central:** mostrar cada técnica **una vez**, en un caso pequeño, y dejar las
 preguntas difíciles abiertas para la hackathon (`RETOS.md`).
 
+**Grupo mixto:** dos ejercicios obligatorios con apoyo: formato de fechas y agregación
+semanal. El PDF, la API y los alias son demostraciones guiadas. El código auxiliar está
+plegado; cada ejercicio incluye una pista y una solución desplegable para continuar.
+
 ---
 
 ## Antes del 4 de diciembre
@@ -17,6 +21,10 @@ con participantes, la prueba en Windows ni la coordinación con ML y la organiza
 que el repositorio se mantiene **público** para probar y revisar el material. La prueba
 de molab con una cuenta nueva sigue pendiente; el acceso público permite verificar
 las descargas de `REPO_URL`.
+
+**Adaptación del 16 de noviembre:** el recorrido pasa de cuatro TODOs a dos. Las
+verificaciones fechadas del 15 de noviembre corresponden a la versión anterior;
+hay que repetir la aceptación visual y el ensayo con participantes sobre esta versión.
 
 ### Preparación técnica
 
@@ -50,8 +58,9 @@ las descargas de `REPO_URL`.
 - [x] Ejecutar por separado `uv run pytest -m network -v`: **2 aprobadas**, incluida la
       consulta que exige recibir datos del IDEAM. Repetir cerca del evento.
 - [x] Abrir estudiante y facilitador en **marimo 0.25.2 + Chrome en macOS**: los estados
-      iniciales del estudiante son los esperados y el facilitador muestra los cuatro
-      indicadores en verde. Esto verifica la apertura, no todo el recorrido manual.
+      iniciales del estudiante eran los esperados y el facilitador mostraba los cuatro
+      indicadores de la versión anterior en verde. Esto verifica la apertura, no todo el
+      recorrido manual.
 - [x] Corregir el visor PDF: marimo solo respeta `initial_page` cuando recibe una URL, así
       que el notebook sirve el archivo y abre el visor en la página donde encontró la
       tabla. Verificado en **Chrome 157 (headless) con marimo 0.25.2** en ambos notebooks:
@@ -76,7 +85,7 @@ las descargas de `REPO_URL`.
       (**Server**), ejecutar las celdas, resolver los TODOs y descargar el parquet oficial.
       Una vista previa estática no basta; WebAssembly no está validado para este taller.
 - [ ] Probar en un **computador Windows limpio**, sin `make`: instalar Git y uv, clonar,
-      ejecutar la secuencia de abajo y completar los cuatro TODOs en el navegador.
+      ejecutar la secuencia de abajo y completar los dos TODOs en el navegador.
 - [ ] Completar el **recorrido visual de aceptación** descrito abajo, en ambos notebooks;
       comprobar los controles, la descarga desde el navegador y el plan B sin wifi.
 - [ ] **Coordinar con el taller de ML:** que use `data/gold/weekly_dengue_signal.parquet`
@@ -86,7 +95,11 @@ las descargas de `REPO_URL`.
       y 1-2 personas de apoyo en sala.
 - [ ] **Escanear ambos QR desde un teléfono**, probarlos proyectados desde el fondo de la
       sala y verificar que el acceso de las participantes funciona.
-- [ ] Ensayar con cronómetro. Si pasa de 50 minutos, usa la "versión corta" (abajo).
+- [ ] Enviar las instrucciones de acceso antes del evento y reservar la instalación o
+      el inicio de sesión fuera de los 50 minutos de contenido. Al empezar deben tener
+      el notebook abierto y ejecutado.
+- [ ] Ensayar con cronómetro con alguien de nivel inicial. Si pasa de 50 minutos, usa
+      la "versión corta" (abajo); las pruebas automáticas no validan la duración.
 
 **Plan B sin internet:** tu portátil con el repo clonado y `uv sync` hecho. Si el wifi
 cae, ellas siguen tu pantalla y corren el notebook después. Todo funciona sin internet
@@ -122,15 +135,31 @@ uv run marimo edit notebooks/workshop.py
 Abre el facilitador en otra terminal con
 `uv run marimo edit notebooks/workshop_facilitator.py --port 2719`.
 Si las celdas aparecen sin ejecutar, pulsa ▶ para correr todas. Al abrir la versión del
-estudiante es normal ver TODOs/checkpoints pendientes y celdas dependientes detenidas;
-en el facilitador, los cuatro indicadores deben quedar en verde.
+estudiante, la demostración del PDF ya pasa y el TODO 1 de fechas está pendiente;
+las celdas que necesitan las fechas esperan. En el facilitador, los dos ejercicios
+están completos y la tabla del ejercicio coincide con la oficial en las métricas validadas.
 
-**Recorrido de aceptación:** cambiar la entidad de la gráfica; cambiar el boletín 26 → 27
-y comprobar el PDF y su lado; **volver a la semana 26 antes del TODO 1** para reproducir la
-pérdida de 733 casos; resolver TODOs 1–4; activar alias; pulsar **Revelar**; mover el
-deslizador de rezago; descargar ambas tablas. El parquet oficial debe tener **750 filas,
-13 columnas, 5 entidades y 150 semanas**, sin llaves repetidas. Revisar también las ayudas
-y la legibilidad del PDF con el proyector.
+**Recorrido de aceptación:**
+
+1. Cambia la entidad de la gráfica y descarga la tabla oficial sin resolver nada.
+2. Cambia el boletín 26 → 27 y comprueba el PDF y la comparación de recortes. Vuelve a
+   la semana 26: `crop` pierde 733 casos y `within_bbox` conserva el total. La carga
+   utiliza el método correcto sin exigir una edición.
+3. En el TODO 1, cambia solo `notification_date_format` a `"%d/%m/%Y"`. Comprueba que
+   todas las fechas se convierten y que el siguiente bloque se habilita.
+4. Desactiva los alias para observar las estaciones sin municipio y vuelve a activarlos.
+   Pulsa **Revelar** para ver la multiplicación de filas y casos.
+5. Antes de editar el TODO 2, la estructura puede estar correcta, pero debe decir
+   **TODO 2 pendiente**. Cambia `sum(mm)` por `avg(mm)` en el SELECT final; conserva
+   `sum(precipitation_mm)` en el primer paso. Debe aparecer **TODO 2 completo**.
+6. Despliega ambas ayudas y soluciones de continuación. Descarga la tabla del ejercicio
+   y la oficial. El parquet oficial debe tener **750 filas, 13 columnas, 5 entidades y
+   150 semanas**, sin llaves repetidas. Comprueba la legibilidad con el proyector.
+7. Como verificación adicional, abre la sección opcional y mueve el deslizador de rezago.
+
+El notebook no necesita ejecutar antes `dengue-pipeline run`: ya recibe los insumos y
+la tabla oficial. Ese comando reconstruye la bodega del paquete y sirve para preparar
+el taller o extender el piloto durante la hackathon.
 
 **API opcional:** con internet, `uv run pytest -m network -v`. Puede tardar varios minutos.
 La prueba del botón puede pasar aunque falle la API, porque el taller permite continuar;
@@ -151,10 +180,16 @@ checkpoints, así que quien no termine el ejercicio también se lleva la tabla. 
 los mismos bytes de `data/gold/weekly_dengue_signal.parquet`.
 
 `mi_weekly_dengue_signal.parquet` es el resultado **del ejercicio**: tiene las mismas 13
-columnas que la oficial, pero su cálculo de lluvia depende de la solución al TODO 4 y del
-interruptor de alias. El comparativo del notebook comprueba **casos, estaciones y lluvia**,
-no la igualdad de las tablas completas; una entidad que falte en cualquiera de las dos tablas cuenta como
-diferencia. No usar el archivo del ejercicio como sustituto del contrato de ML.
+columnas que la oficial, pero su cálculo de lluvia depende de la solución al TODO 2 y del
+interruptor de alias (activado por defecto). El comparativo comprueba **casos, estaciones
+y lluvia en cada entidad y semana**, no la igualdad de las 13 columnas. Una llave que
+falte en cualquiera de las tablas cuenta como diferencia. No usar el archivo del ejercicio
+como sustituto del contrato de ML.
+
+**Dos verificaciones distintas:** `checkpoint_3` comprueba la estructura y las semanas;
+`aggregation_ok` comprueba los valores de lluvia y estaciones. El resumen marca completo
+el TODO 2 solo cuando pasa la segunda comprobación. Una suma de estaciones incorrecta
+puede tener llaves únicas y debe seguir apareciendo pendiente.
 
 Confirmar con quien dicta ML el [diccionario](diccionario_de_datos.md), la llave
 `territorial_entity` + `epi_year` + `epi_week`, los casos semanales frente a los acumulados
@@ -165,38 +200,39 @@ check; preparar el archivo no equivale a haber coordinado la entrega.
 
 ## Cómo dictarlo
 
-Proyecta **`notebooks/workshop.py`** (la versión con ejercicios) y resuelve los TODOs en
-vivo con ellas. Ten `workshop_facilitator.py` abierto en otra pestaña como respaldo.
-Trabajan en **parejas**: una escribe, la otra guía.
+Proyecta **`notebooks/workshop.py`** y ten `workshop_facilitator.py` en otra pestaña
+como respaldo. Trabajan en **parejas**: una escribe y la otra explica qué significa el
+resultado; intercambian roles en el segundo ejercicio. Solo editan las dos celdas visibles.
+No expliques el código auxiliar línea por línea: pueden desplegarlo después.
 
 | Min | Sección del notebook | Qué haces | Qué hacen ellas |
 |---|---|---|---|
-| 0-5 | Portada + **1 · Empieza por el final** | Cuenta la historia: *"cada semana una secretaría abre un PDF…"*. Muestra la gráfica final y cambia de entidad. Señala el botón de la **tabla oficial para ML** debajo de la tabla | Escanean el QR y abren el notebook |
-| 5-8 | **2 · El mapa** | Bronce = mercado, plata = *mise en place*, oro = plato. Única "teoría" del taller | Escuchan |
-| 8-12 | **3 · PDF**: el visor y el selector de semana | Pregunta: *"¿cómo sacarían esta tabla, cada semana, para siempre?"*. Cambia de la semana 26 a la 27: cambia el número de tabla y el lado. En ambos extractos está en la página 3. **Vuelve a la semana 26** antes del TODO 1 | Responden en voz alta |
-| 12-16 | **TODO 1** | Dales 3 minutos. Las pruebas se ponen en verde solas | Escriben `parse_integer` y `parse_decimal` |
-| 16-22 | **Checkpoint 1 → TODO 2** | Sale en **rojo**: faltan 733 casos. Lee con ellas las líneas rotas (`Putumayo … 66 e`). ¿De dónde salió la "e"? Abre la ayuda. Cambien `crop` por `within_bbox` | Encuentran el error y lo arreglan |
-| 22-24 | Carga a bronce | *"Validar contra el total del propio documento es la mejor prueba que existe"* | — |
-| 24-30 | **4 · SIVIGILA → TODO 3** | El checkpoint 2 sale en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` lanza un error; `TRY_CAST` devuelve `NULL` y permite continuar | Escriben `split_part` + `try_strptime`; conservan las fechas ISO con `coalesce` + `try_cast` |
-| 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
-| 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
-| 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
-| 42-45 | **TODO 4 → Checkpoint 3** | `GROUP BY`. Cuando quede en verde, distingue el resultado del ejercicio de la **tabla oficial para ML**; señala los dos botones. Si el mensaje de abajo dice *Casi*, nombra la columna que no coincide: ¿es lo mismo promediar los días que sumar la semana por estación y luego promediar estaciones? Quien no llegue al verde también tiene el botón oficial, justo debajo y en la sección 1 | Agrupan y descargan la tabla oficial para ML |
-| 45-50 | **7 · Lo que no cuadra** | Las incógnitas 1 (el pasado cambia) y 3 (825 mm). Mueve el deslizador de rezago. Cierra con `RETOS.md`: *"esto es lo que nadie ha resuelto"* | — |
-| 50-60 | Preguntas | — | — |
+| 0–8 | **1 · Empieza por el final** + **2 · El mapa** | Muestra una fila de la tabla, la gráfica y el botón oficial para ML. Presenta las tres fuentes y bronce → plata → oro | Identifican qué representa una fila; ya tienen abierto el notebook |
+| 8–18 | **3 · PDF**, demostración | Explica las conversiones numéricas ya escritas. Compara `crop` y `within_bbox` en ambas semanas y valida contra el Total; vuelve a la semana 26 | Predicen qué recorte conservar y explican por qué 733 casos perdidos son una alerta; no editan código |
+| 18–26 | **4 · TODO 1: fechas** | Dedica 2 min a leer `2/12/2024`, 4 min al trabajo en parejas y 2 min al resultado. La extracción del texto, el tipo y la alternativa ISO vienen resueltos | Cambian solo el formato, comprueban las fechas válidas y explican los `NULL` |
+| 26–31 | **5 · IDEAM y alias**, demostración | Muestra la consulta agregada y la copia guardada. La API en vivo es opcional. Desactiva y reactiva los alias para mostrar `CALI` vs `SANTIAGO DE CALI` | Observan qué estaciones pierden municipio; dejan los alias activados |
+| 31–43 | **6 · TODO 2: agregación y cruce** | Usa 3 min para predecir y revelar el cruce, 2 min para el ejemplo 30/60 mm, 5 min para editar y 2 min para comprobar. Menciona domingo–sábado; deja la tabla ISO plegada | Cambian solo la agregación final; explican la fila por estación y la fila por entidad. Distinguen estructura correcta de cálculo correcto |
+| 43–50 | Tabla oficial, CLI y una pregunta abierta | Señala la descarga oficial. Muestra `uv run dengue-pipeline run` como ejecución reproducible del paquete, separada del notebook. Presenta solo «El pasado cambia» y remite a `RETOS.md` | Descargan la tabla oficial y reconocen qué queda abierto para la hackathon |
+| 50–60 | Preguntas | Responde sobre las decisiones y el uso del piloto | Preguntan |
+
+**Apoyos y continuación:** deja que intenten cada decisión antes de abrir la pista.
+Si una pareja no avanza, puede desplegar «Solución para continuar», aplicar la línea y
+explicar el resultado. No necesita esperar a que revises su portátil para seguir.
+Quien tenga más experiencia puede leer las preguntas opcionales; no añadas un tercer TODO
+obligatorio. Resolver todo desde cero no es la meta de estos 50 minutos.
 
 ### Números que vas a ver (con los datos del repo)
 
 * Boletín semana 26: Tabla 17, página 3 del extracto (28 del original), **56 797** casos.
   Semana 27: Tabla 23, **59 262**.
 * Con `crop()`: 35 filas y faltan **733** casos (Putumayo 318 + Quindío 195 + Caldas 110 + Risaralda 110).
-* TODO 3 sin arreglar: **0 %** de las fechas de notificación convertidas (los 112 908 casos
-  quedan con `NULL`); los municipios sí emparejan al 100 %.
+* TODO 1 con el formato inicial ISO: **0 %** de las fechas de notificación convertidas
+  (los 112 908 casos quedan con `NULL`); los municipios sí emparejan al 100 %.
 * Sin alias: 5 estaciones de Cali y 1 de Buga sin municipio.
 * Explosión de filas: `weekly_cases` tiene **520** filas; con el interruptor de alias activado
-  (como queda después del minuto 37) el cruce con la lluvia diaria da **10 354** filas y
-  **1 118 315** casos en vez de **112 908**. Con el interruptor apagado: 8 350 filas y
-  904 024 casos.
+  (activado por defecto y restaurado al terminar la demostración) el cruce con la lluvia
+  diaria da **10 354** filas y **1 118 315** casos en vez de **112 908**. Con el interruptor
+  apagado: 8 350 filas y 904 024 casos.
 * El pasado cambia: 56 797 + 2 847 notificados ≠ 59 262. Faltan **382**. Putumayo baja de 318 a 309.
 * Lluvia imposible: **825,8 mm** en Juan de Acosta (2026-05-10).
 
@@ -205,15 +241,19 @@ Trabajan en **parejas**: una escribe, la otra guía.
 > revísalos.
 
 La muestra sintética usa fechas ISO: `TRY_CAST` ya las convierte y no reproduce la
-trampa del TODO 3. Usa los datos INS para mostrarla. La solución admite ambos formatos.
+trampa del TODO 1. Usa los datos INS para mostrarla. La solución admite ambos formatos.
 El checkpoint compara los conteos exactos; los porcentajes se redondean solo para mostrarlos.
 
 ### Versión corta (si vas atrasado)
 
-* Haz tú el TODO 1 en vivo (30 segundos) y deja que ellas hagan solo el TODO 2.
-* Si el TODO 3 se alarga, escribe tú el `try_strptime` y explica qué hace cada parte.
-* Salta la tabla de semana ISO vs epidemiológica: menciónala y sigue.
-* En "Lo que no cuadra" muestra solo la incógnita 1 y manda a `RETOS.md`.
+* Omite la consulta de la API en vivo y usa directamente la copia guardada.
+* En el PDF muestra la comparación de la semana 26 y su total; deja los detalles del
+  recorte para consultar después.
+* Conserva las dos decisiones de fechas y agregación. Si hace falta, abre la solución
+  de continuación y pide que expliquen el resultado, sin detener al resto del grupo.
+* Mantén plegada la comparación ISO; di que usamos semanas domingo–sábado.
+* En el cierre presenta solo «El pasado cambia». Las demás incógnitas y el deslizador
+  de rezago quedan para después. Conserva la descarga oficial y las preguntas.
 
 ### Si algo falla
 
@@ -224,7 +264,8 @@ El checkpoint compara los conteos exactos; los porcentajes se redondean solo par
 | marimo muestra celdas sin resultados al abrir | Pulsa ▶ para ejecutar todas; los checkpoints pendientes del estudiante son intencionales |
 | `uv` no está instalado | <https://docs.astral.sh/uv/getting-started/installation/> (un comando) |
 | La API del IDEAM no responde | Es esperado a veces; el notebook sigue con la copia guardada |
-| Alguien se atasca en un TODO | Las pistas están en el texto del TODO y, para los TODOs 2 y 4, en la ayuda (💡); ninguna trae la respuesta. La solución está en el notebook del facilitador |
+| Alguien se atasca en un TODO | Abre la pista; si no basta, despliega «Solución para continuar» y aplica la línea indicada. Comprueba y explica el resultado |
+| Estructura correcta, pero TODO 2 pendiente | Revisa `avg(mm)` en el SELECT final y conserva la suma por estación; si hay municipios sin emparejar, reactiva los alias |
 | Una celda no se actualiza | En marimo casi nunca pasa; si pasa, menú → *Restart kernel* |
 | El visor PDF abre en la página 1 | Algún navegador puede ignorar la página inicial. El texto bajo el selector dice en qué página está la tabla: ve a ella a mano |
 | Aparece "no se pudo actualizar …; uso la copia guardada" | Fuera del repositorio (molab), el notebook vuelve a descargar los datos en cada sesión. Si GitHub no responde, usa la última copia completa; revisa la conexión y `REPO_URL` |

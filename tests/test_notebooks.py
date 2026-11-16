@@ -30,85 +30,28 @@ import generate_student_notebook as generator  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
-CHECKPOINTS = ("todo1_ok", "checkpoint_1", "checkpoint_2", "checkpoint_3")
+CHECKPOINTS = ("numbers_ok", "checkpoint_1", "checkpoint_2", "checkpoint_3", "aggregation_ok")
 GOLD = ROOT / "data" / "gold" / "weekly_dengue_signal.parquet"
 REPO_URL_LINE = 'REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"'
 OFFICIAL_DOWNLOAD = "Descargar tabla oficial para ML"
+DATE_EXPRESSION = """coalesce(
+                CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
+                try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
+            ) AS notification_date,"""
 
-TODO4_STUB = (
-    "precipitation_mm AS mean_precipitation_mm,\n"
-    "               1 AS stations_with_data\n"
-    "        FROM silver.entity_daily_rainfall"
-)
-
-# Student solutions for each TODO (exact replacements in workshop.py).
+# Only these two edits are required; the remaining SQL is a runnable scaffold.
 SOLUTIONS: dict[str, list[tuple[str, str]]] = {
     "todo1": [
-        (
-            "# ✏️ TODO 1a: remove spaces and convert to an integer with int()\n        return None",
-            'return int(text.replace(" ", ""))',
-        ),
-        (
-            "# ✏️ TODO 1b: replace the comma with a dot and convert with float()\n"
-            "        return None",
-            'return float(text.replace(",", "."))',
-        ),
+        ('    notification_date_format = "%Y-%m-%d"', '    notification_date_format = "%d/%m/%Y"')
     ],
-    "todo2": [("return page.crop(_bbox)", "return page.within_bbox(_bbox)")],
-    "todo3": [
+    "todo2": [
         (
-            "try_cast(fec_not AS DATE) AS notification_date,",
-            "coalesce(CAST(try_strptime(split_part(trim(fec_not), ' ', 1), '%d/%m/%Y') AS DATE), "
-            "try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)) AS notification_date,",
+            "round(sum(mm), 2) AS mean_precipitation_mm,",
+            "round(avg(mm), 2) AS mean_precipitation_mm,",
         )
     ],
-    # Same result as the repository: weekly total per station, averaged over stations.
-    "todo4": [
-        (
-            "SELECT territorial_entity,\n"
-            "               epi_year(observation_date) AS epi_year, "
-            "epi_week(observation_date) AS epi_week,\n"
-            "               " + TODO4_STUB,
-            "WITH per_station AS (\n"
-            "            SELECT territorial_entity, station_code,\n"
-            "                   epi_year(observation_date) AS epi_year,\n"
-            "                   epi_week(observation_date) AS epi_week,\n"
-            "                   sum(precipitation_mm) AS mm\n"
-            "            FROM silver.entity_daily_rainfall\n"
-            "            GROUP BY ALL\n"
-            "        )\n"
-            "        SELECT territorial_entity, epi_year, epi_week,\n"
-            "               round(avg(mm), 2) AS mean_precipitation_mm,\n"
-            "               count(*) AS stations_with_data\n"
-            "        FROM per_station\n"
-            "        GROUP BY ALL",
-        )
-    ],
-    # Right grain, different quantity: the mean daily rainfall (mm/day).
-    "todo4_daily_mean": [
-        (
-            TODO4_STUB,
-            "avg(precipitation_mm) AS mean_precipitation_mm,\n"
-            "               count(DISTINCT station_code) AS stations_with_data\n"
-            "        FROM silver.entity_daily_rainfall\n"
-            "        GROUP BY ALL",
-        )
-    ],
-    # Right grain, but summing every station (DECIMAL in DuckDB) and counting station-days.
-    "todo4_sum": [
-        (
-            TODO4_STUB,
-            "sum(precipitation_mm) AS mean_precipitation_mm,\n"
-            "               count(*) AS stations_with_data\n"
-            "        FROM silver.entity_daily_rainfall\n"
-            "        GROUP BY ALL",
-        )
-    ],
-    # Not a TODO: turn on the municipality-alias switch in section 5.
-    "aliases": [('mo.ui.switch(label="Usar', 'mo.ui.switch(value=True, label="Usar')],
 }
-
-TODOS = ("todo1", "todo2", "todo3", "todo4")
+TODOS = ("todo1", "todo2")
 
 
 def run_app(
@@ -179,14 +122,10 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     assert definitions["cases_match"] is True
     assert_ml_contract(definitions["ml_export"])
     assert definitions["gold"].schema == definitions["final_gold"].schema
-    assert (
-        definitions["missing_municipalities"].height == 2
-    )  # CALI and BUGA, until aliases are enabled
-    # Without aliases, Cali and the Buga station have no rainfall.
-    assert definitions["gold_matches_repo"] is False
-    assert definitions["gold_mismatches"] == ["stations", "rainfall"]
-    # Cali has no rainfall to correlate; the lag section says how to fix it.
-    assert "interruptor de alias" in lag_section(rendered)
+    assert definitions["missing_municipalities"].is_empty()
+    assert definitions["gold_matches_repo"] is True
+    assert definitions["gold_mismatches"] == []
+    assert "interruptor de alias" not in lag_section(rendered)
 
 
 @pytest.mark.parametrize("variant", ["facilitator", "student"])
@@ -251,8 +190,8 @@ def test_initial_student_notebook_waits_for_todos(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     outputs, definitions = run_app(student_with(tmp_path), monkeypatch)
-    assert definitions["todo1_ok"] is False
-    assert definitions["checkpoint_1"] is False
+    assert definitions["numbers_ok"] is True
+    assert definitions["checkpoint_1"] is True
     assert definitions["checkpoint_2"] is False
     assert "checkpoint_3" not in definitions
     # The official ML table must not depend on the exercises: section 1 and the end of
@@ -263,30 +202,55 @@ def test_initial_student_notebook_waits_for_todos(
     # Headless runs embed download data as base64: both buttons must carry the gold bytes.
     gold_base64 = base64.b64encode(GOLD.read_bytes()).decode()
     assert all(gold_base64 in button for button in buttons)
-    # Date trap: municipalities match, but try_cast leaves every date empty, silently.
+    # The ISO scaffold is runnable but cannot parse the INS day/month/year values.
     by_department = definitions["cases_by_department"]
     assert by_department["matched_pct"].to_list() == [100.0] * by_department.height
     assert by_department["date_pct"].to_list() == [0.0] * by_department.height
 
 
-def test_todo1_reveals_cropping_trap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    definitions = run_notebook(student_with(tmp_path, "todo1"), monkeypatch)
-    assert definitions["todo1_ok"] is True
-    assert definitions["checkpoint_1"] is False  # .crop() loses 4 rows in week 26
-    table = definitions["bulletin_table"]
-    assert table.height == 35
+@pytest.mark.parametrize(
+    ("selection", "cropped_rows", "lost", "total"),
+    [
+        ("Semana 26 (28 jun – 4 jul 2026)", 35, 733, 56797),
+        ("Semana 27 (5 – 11 jul 2026)", 39, 0, 59262),
+    ],
+)
+def test_pdf_demonstration_preserves_the_trap_without_blocking_students(
+    selection: str,
+    cropped_rows: int,
+    lost: int,
+    total: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path,
+        [],
+        [('value="Semana 26 (28 jun – 4 jul 2026)"', f'value="{selection}"')],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    comparison = definitions["pdf_comparison"].to_dicts()
+    assert comparison == [
+        {"method": "crop", "rows": cropped_rows, "sum": total - lost, "total": total, "lost": lost},
+        {"method": "within_bbox", "rows": 39, "sum": total, "total": total, "lost": 0},
+    ]
+    assert definitions["checkpoint_1"] is True
+    assert definitions["bulletin_table"].height == 39
+    assert definitions["bronze_bulletin"] is not None
 
 
 def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     progress = [
-        (("todo1", "todo2"), {"checkpoint_1": True, "checkpoint_2": False}),
-        (("todo1", "todo2", "todo3"), {"checkpoint_2": True, "checkpoint_3": False}),
-        (TODOS, {"checkpoint_3": True}),
+        (("todo1",), {"checkpoint_2": True, "checkpoint_3": True, "aggregation_ok": False}),
+        (TODOS, {"checkpoint_2": True, "checkpoint_3": True, "aggregation_ok": True}),
     ]
     for todos, expected in progress:
-        definitions = run_notebook(student_with(tmp_path, *todos), monkeypatch)
+        outputs, definitions = run_app(student_with(tmp_path, *todos), monkeypatch)
         actual = {key: definitions.get(key) for key in expected}
         assert actual == expected, f"With {todos}: {status(definitions)}"
+        assert html_outputs(outputs, "Estructura correcta")
+        marker = "TODO 2 completo" if expected["aggregation_ok"] else "TODO 2 pendiente"
+        assert html_outputs(outputs, marker)
 
 
 def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -> Path:
@@ -415,7 +379,6 @@ def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.M
         tmp_path,
         [
             ("not reveal.value", "False"),
-            ('mo.ui.switch(label="Usar', 'mo.ui.switch(value=True, label="Usar'),
         ],
     )
     rendered, definitions = run_app(path, monkeypatch)
@@ -429,29 +392,96 @@ def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.M
 def test_student_solution_matches_repository_gold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    definitions = run_notebook(student_with(tmp_path, *TODOS, "aliases"), monkeypatch)
+    definitions = run_notebook(student_with(tmp_path, *TODOS), monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].schema == definitions["final_gold"].schema
     assert definitions["gold_mismatches"] == []
     assert definitions["gold_matches_repo"] is True
+    assert definitions["gold"].equals(definitions["final_gold"])
+
+
+def test_aggregation_checks_each_week_even_when_entity_averages_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opposite errors in two weeks must not cancel out in the completion check."""
+    original = 'gold = con.sql("SELECT * FROM gold.signal").pl()'
+    modified = (
+        original
+        + """
+    _indices = (
+        gold.with_row_index()
+        .filter(
+            (pl.col("territorial_entity") == "Atlántico")
+            & pl.col("mean_precipitation_mm").is_not_null()
+        )
+        .head(2)["index"].to_list()
+    )
+    gold = gold.with_row_index().with_columns(
+        (pl.col("mean_precipitation_mm") + pl.when(pl.col("index") == _indices[0]).then(1.0)
+         .when(pl.col("index") == _indices[1]).then(-1.0).otherwise(0.0))
+        .alias("mean_precipitation_mm")
+    ).drop("index")"""
+    )
+    notebook = _modified_facilitator(tmp_path, [(original, modified)])
+    definitions = run_notebook(notebook, monkeypatch)
+    for column in ("gold", "final_gold"):
+        summary = (
+            definitions[column]
+            .group_by("territorial_entity")
+            .agg(pl.col("mean_precipitation_mm").mean().round(2))
+            .sort("territorial_entity")
+        )
+        if column == "gold":
+            student_summary = summary
+        else:
+            assert student_summary.equals(summary)
+    assert definitions["checkpoint_3"] is True
+    assert definitions["gold_mismatches"] == ["rainfall"]
+    assert definitions["aggregation_ok"] is False
 
 
 @pytest.mark.parametrize(
-    ("todo4", "mismatches"),
-    [("todo4_daily_mean", ["rainfall"]), ("todo4_sum", ["stations", "rainfall"])],
+    ("edits", "mismatches"),
+    [
+        ([("sum(precipitation_mm) AS mm", "avg(precipitation_mm) AS mm")], ["rainfall"]),
+        (
+            [("count(DISTINCT station_code) AS stations_with_data", "1 AS stations_with_data")],
+            ["stations"],
+        ),
+    ],
 )
-def test_other_todo4_answers_report_what_differs(
-    todo4: str, mismatches: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_wrong_aggregation_values_do_not_complete_the_exercise(
+    edits: list[tuple[str, str]],
+    mismatches: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A different aggregation keeps the grain but must say which columns differ."""
-    path = student_with(tmp_path, "todo1", "todo2", "todo3", todo4, "aliases")
-    rendered, definitions = run_app(path, monkeypatch)
+    notebook = _student_with_edits(tmp_path, TODOS, edits)
+    rendered, definitions = run_app(notebook, monkeypatch)
     assert definitions["checkpoint_3"] is True
-    # sum() over DECIMAL stays DECIMAL; gold casts it so the charts and the parquet work.
+    assert definitions["aggregation_ok"] is False
     assert definitions["gold"].schema == definitions["final_gold"].schema
     assert definitions["gold_mismatches"] == mismatches
     assert definitions["gold_matches_repo"] is False
-    assert html_outputs(rendered, "Incógnita 2")  # the chart cell ran
+    assert html_outputs(rendered, "TODO 2 pendiente")
+    assert html_outputs(rendered, "Incógnita 2")
+
+
+def test_alias_demonstration_explains_missing_rainfall(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notebook = _modified_facilitator(
+        tmp_path,
+        [('mo.ui.switch(value=True, label="Usar', 'mo.ui.switch(value=False, label="Usar')],
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["missing_municipalities"].height == 2
+    assert definitions["gold_mismatches"] == ["stations", "rainfall"]
+    assert definitions["aggregation_ok"] is False
+    assert "interruptor de alias" in lag_section(outputs)
+    assert html_outputs(outputs, "activa el interruptor")
 
 
 @pytest.mark.network
@@ -465,23 +495,22 @@ def test_student_notebook_is_current() -> None:
     assert generator.main(["--check"]) == 0
 
 
-def test_student_notebook_has_no_solutions() -> None:
-    """Help accordions give hints, never an answer students can paste."""
+def test_student_has_two_unsolved_exercises_with_support() -> None:
+    """Solutions are available in help; both editable cells still require a decision."""
     student = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
     assert "SOLUTION" not in student
     assert "STUDENT" not in student
-    # The TODO 2 help names within_bbox on purpose; nothing before it may.
-    assert "within_bbox" not in student.split("💡 Ayuda para el TODO 2")[0]
+    assert student.count("### ✏️ TODO ") == 2
+    assert student.count("@app.cell\n") == 2  # supporting code is collapsed
+    assert "with app.setup(hide_code=True):" in student
+    assert "@app.function(hide_code=True)" in student
     facilitator = (ROOT / "notebooks" / "workshop_facilitator.py").read_text(encoding="utf-8")
-    student_any_quotes = student.replace("'", '"')
-    for answer in (
-        'text.replace(",", ".")',  # TODO 1
-        "try_strptime(split_part(",  # TODO 3
-        "sum(precipitation_mm)",  # TODO 4
-        "count(DISTINCT station_code) AS stations_with_data",  # TODO 4
-    ):
-        assert answer in facilitator  # the check below is not vacuous
-        assert answer not in student_any_quotes, answer
+    for replacements in SOLUTIONS.values():
+        for stub, solved in replacements:
+            assert stub in student
+            assert solved in facilitator
+    for topic in ("fechas", "agregación"):
+        assert f"Solución para continuar · {topic}" in student
 
 
 def _student_with_edits(tmp_path: Path, todos: Sequence[str], edits: list[tuple[str, str]]) -> Path:
@@ -501,8 +530,11 @@ def test_checkpoint_1_validates_both_bulletins(
     """Week 27 survives .crop(), so selecting it must not hide the rows lost in week 26."""
     notebook = _student_with_edits(
         tmp_path,
-        ["todo1"],
-        [('value="Semana 26 (28 jun – 4 jul 2026)"', 'value="Semana 27 (5 – 11 jul 2026)"')],
+        [],
+        [
+            ('value="Semana 26 (28 jun – 4 jul 2026)"', 'value="Semana 27 (5 – 11 jul 2026)"'),
+            ("return page.within_bbox(_bbox)", "return page.crop(_bbox)"),
+        ],
     )
     definitions = run_notebook(notebook, monkeypatch)
     assert definitions["bulletin_table"].height == 39  # the selected week reads fine
@@ -524,7 +556,7 @@ def test_checkpoint_2_requires_real_dates(
     notebook = _student_with_edits(
         tmp_path,
         ["todo1", "todo2"],
-        [("try_cast(fec_not AS DATE) AS notification_date,", wrong_answer)],
+        [(DATE_EXPRESSION, wrong_answer), ("[notification_date_format],", "[],")],
     )
     definitions = run_notebook(notebook, monkeypatch)
     assert definitions["checkpoint_2"] is False, status(definitions)
@@ -533,14 +565,14 @@ def test_checkpoint_2_requires_real_dates(
 def test_checkpoint_2_accepts_a_timestamp_solution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The hint in the text (split_part + try_strptime, without CAST) is a valid answer."""
+    """A participant inspecting the prepared SQL may keep its TIMESTAMP result."""
     notebook = _student_with_edits(
         tmp_path,
         ["todo1", "todo2"],
         [
             (
-                "try_cast(fec_not AS DATE) AS notification_date,",
-                "try_strptime(split_part(fec_not, ' ', 1), '%d/%m/%Y') AS notification_date,",
+                DATE_EXPRESSION,
+                "try_strptime(split_part(fec_not, ' ', 1), ?) AS notification_date,",
             )
         ],
     )
@@ -562,12 +594,12 @@ def test_checkpoint_3_requires_epidemiological_weeks(
 ) -> None:
     notebook = _student_with_edits(
         tmp_path,
-        ["todo1", "todo2", "todo3", "todo4_daily_mean"],
+        TODOS,
         [
             (
                 "epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,\n"
-                "               avg(precipitation_mm)",
-                f"{week_columns}\n               avg(precipitation_mm)",
+                "                   sum(precipitation_mm)",
+                f"{week_columns}\n                   sum(precipitation_mm)",
             )
         ],
     )

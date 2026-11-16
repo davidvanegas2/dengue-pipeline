@@ -15,7 +15,7 @@ import marimo
 __generated_with = "0.25.2"
 app = marimo.App(width="medium", app_title="Taller · Del PDF a la tabla oro")
 
-with app.setup:
+with app.setup(hide_code=True):
     import io
     import json
     import os
@@ -36,7 +36,7 @@ with app.setup:
     REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"
 
 
-@app.function
+@app.function(hide_code=True)
 def plot_signal(data: pl.DataFrame, cases: str, rainfall: str, title: str) -> alt.VConcatChart:
     """Plot weekly cases above weekly rainfall for one territorial entity."""
     _base = alt.Chart(data).encode(x=alt.X("week_start:T", title=None))
@@ -64,14 +64,20 @@ def _():
 
     | Símbolo | Significa |
     |---|---|
-    | ✏️ **TODO** | Te toca escribir código (poquito, lo prometo) |
-    | ✅ **Checkpoint** | Una verificación automática: verde = vas bien |
+    | ✏️ **TODO** | Uno de los dos ejercicios guiados: fechas y agregación |
+    | ✅ **Checkpoint** | Una verificación automática; lee qué está comprobando |
+    | 👀 **Demostración** | Observa, predice y comenta; el código ya está preparado |
     | 🔍 **Trampa** | Un problema real de los datos que vamos a cazar |
     | 🤔 **Predice** | Adivina antes de correr |
 
     **¿Primera vez en marimo?** Es un notebook *reactivo*: cuando cambias una celda,
     todas las que dependen de ella se vuelven a ejecutar solas. No hay "estado
     escondido" ni que correr las celdas en orden. Ejecuta una celda con `Ctrl/⌘ + Enter`.
+
+    Trabajen en **parejas**. Solo necesitan editar las celdas de los **TODOs 1 y 2**;
+    el código de apoyo se puede desplegar para consultarlo. Cada ejercicio tiene una
+    pista y una **solución para continuar** si se atascan. La tabla oficial para ML
+    está disponible desde el comienzo, aunque no terminen los ejercicios.
     """)
     return
 
@@ -147,14 +153,14 @@ def _():
     mo.md(r"""
     ## 1 · Empieza por el final
 
-    Esta es la tabla que vas a construir en los próximos 45 minutos: **una fila por
+    Esta es la tabla que vamos a construir durante el taller: **una fila por
     entidad territorial y semana epidemiológica**, con casos de dengue y lluvia.
     Es la que usará el taller de ML.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(path):
     # The official table for the ML workshop: the exact bytes exported by the pipeline.
     ml_export = path("gold").read_bytes()
@@ -167,7 +173,7 @@ def _(path):
     return final_gold, ml_export, selected_entity
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(selected_entity, final_gold, ml_export):
     mo.vstack(
         [
@@ -221,7 +227,7 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     # DuckDB is an analytical database stored in a file or in memory.
     # No server or credentials are needed: install it with pip install duckdb.
@@ -260,7 +266,7 @@ def _(path, bulletin_week, bulletin_page):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     bulletin_week = mo.ui.dropdown(
         {
@@ -274,7 +280,7 @@ def _():
     return (bulletin_week,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(path, bulletin_week):
     def find_table(pdf_path: Path):
         """Find the table by title because its page and number change every week."""
@@ -297,7 +303,7 @@ def _(path, bulletin_week):
     return bulletin_page, find_table, page, title
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(page):
     # First attempt: extract the entire page text.
     mo.plain_text("\n".join(page.extract_text().splitlines()[5:22]))
@@ -311,32 +317,23 @@ def _():
     con el texto de al lado. Además los números vienen en formato colombiano:
     `9 504` (miles con espacio) y `30,3` (coma decimal).
 
-    ### ✏️ TODO 1 · Convierte los números colombianos
+    ### 👀 Demostración · Números colombianos
+    El código ya está resuelto: quitamos los espacios antes de usar `int` y cambiamos
+    la coma por un punto antes de usar `float`. Predice cuánto vale `"9 504"` después
+    de convertirlo y compruébalo en la tabla. No tienes que editar esta celda.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     def parse_integer(text: str) -> int | None:
         """'9 504' -> 9504. The bulletin uses spaces as thousands separators."""
-        # >>> SOLUTION
         return int(text.replace(" ", "").replace(" ", ""))
-        # <<< SOLUTION
-        # >>> STUDENT
-        # # ✏️ TODO 1a: remove spaces and convert to an integer with int()
-        # return None
-        # <<< STUDENT
 
     def parse_decimal(text: str) -> float | None:
         """'30,3' -> 30.3. The bulletin uses a decimal comma."""
-        # >>> SOLUTION
         return float(text.replace(",", "."))
-        # <<< SOLUTION
-        # >>> STUDENT
-        # # ✏️ TODO 1b: replace the comma with a dot and convert with float()
-        # return None
-        # <<< STUDENT
 
     return parse_decimal, parse_integer
 
@@ -364,42 +361,36 @@ def _(parse_decimal, parse_integer):
                 "ok": _actual == _expected,
             }
         )
-    todo1_ok = all(f["ok"] for f in _rows)
+    numbers_ok = all(f["ok"] for f in _rows)
     mo.vstack(
         [
             mo.callout(
                 mo.md(
-                    "✅ **TODO 1 listo.**"
-                    if todo1_ok
-                    else "⏳ **TODO 1:** aún hay pruebas en rojo."
+                    "✅ **Demostración:** las conversiones numéricas son correctas."
+                    if numbers_ok
+                    else "❌ **Demostración:** revisa las conversiones numéricas."
                 ),
-                kind="success" if todo1_ok else "neutral",
+                kind="success" if numbers_ok else "danger",
             ),
             pl.DataFrame(_rows),
         ]
     )
-    return (todo1_ok,)
+    return (numbers_ok,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     def crop_table(page, title):
         """Keep the left or right page column containing the table."""
         _half = page.width / 2
         _x0, _x1 = (0, _half) if title["x0"] < _half else (_half, page.width)
         _bbox = (_x0, title["top"] - 2, _x1, page.height)
-        # >>> SOLUTION
         return page.within_bbox(_bbox)
-        # <<< SOLUTION
-        # >>> STUDENT
-        # # ✏️ TODO 2 (discover this at checkpoint 1)
-        # return page.crop(_bbox)
-        # <<< STUDENT
 
     return (crop_table,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(parse_decimal, parse_integer):
     # Table row: entity, cases, warning-sign percentage, severe percentage and remainder.
     ROW = re.compile(
@@ -432,7 +423,50 @@ def _(parse_decimal, parse_integer):
     return (read_rows,)
 
 
-@app.cell
+@app.cell(hide_code=True)
+def _(page, title, read_rows):
+    _half = page.width / 2
+    _x0, _x1 = (0, _half) if title["x0"] < _half else (_half, page.width)
+    _bbox = (_x0, title["top"] - 2, _x1, page.height)
+    _results = []
+    for _method, _cropped in (
+        ("crop", page.crop(_bbox)),
+        ("within_bbox", page.within_bbox(_bbox)),
+    ):
+        _rows, _ = read_rows(_cropped.extract_text())
+        _total = sum(r["total_cases"] for r in _rows if r["territorial_entity"] == "Total")
+        _sum = sum(r["total_cases"] for r in _rows if r["territorial_entity"] != "Total")
+        _results.append(
+            {
+                "method": _method,
+                "rows": len(_rows),
+                "sum": _sum,
+                "total": _total,
+                "lost": _total - _sum,
+            }
+        )
+    pdf_comparison = pl.DataFrame(_results)
+    mo.vstack(
+        [
+            mo.md(
+                "### 👀 Demostración · ¿Se perdieron casos al extraer?\n"
+                "Compara los dos recortes de la misma página. `rows` incluye la fila Total; "
+                "`lost` es la diferencia entre el total publicado y la suma extraída. "
+                "**¿Cuál conservarías y cómo comprobarías que funcionó?** "
+                "Cambia entre las semanas 26 y 27: un método puede funcionar en una y fallar en otra."
+            ),
+            pdf_comparison,
+            mo.md(
+                "`crop` incluye caracteres que tocan el borde; `within_bbox` conserva solo "
+                "los que están completamente adentro. En la semana 26 entran letras de la "
+                "columna vecina y se pierden filas. El resto del notebook ya usa `within_bbox`."
+            ),
+        ]
+    )
+    return (pdf_comparison,)
+
+
+@app.cell(hide_code=True)
 def _(read_rows, page, crop_table, title):
     _text = crop_table(page, title).extract_text()
     _rows, discarded_lines = read_rows(_text)
@@ -447,7 +481,7 @@ def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
     if not _ready:
         checkpoint_1 = False
         _output = mo.callout(
-            mo.md("⏳ **Checkpoint 1:** completa primero el TODO 1."), kind="neutral"
+            mo.md("❌ **Validación del PDF:** revisa las conversiones numéricas."), kind="danger"
         )
     else:
         # Validate every bulletin against its own Total row, not only the selected one:
@@ -486,7 +520,7 @@ def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
             )
             _output = mo.callout(
                 mo.md(
-                    f"✅ **Checkpoint 1:** {_detail} casos, igual que la fila *Total* de cada "
+                    f"✅ **Validación del PDF:** {_detail} casos, igual que la fila *Total* de cada "
                     "boletín. Validar contra el propio documento es la mejor prueba que existe."
                 ),
                 kind="success",
@@ -502,13 +536,13 @@ def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
             )
             _output = mo.callout(
                 mo.md(
-                    f"❌ **Checkpoint 1 (boletín de la semana {_r['week']}):** las entidades "
+                    f"❌ **Validación del PDF (semana {_r['week']}):** las entidades "
                     f"suman **{_r['sum']:,}**, pero el boletín dice **{_r['total']:,}**. "
                     f"Faltan **{_r['total'] - _r['sum']:,} casos**.\n\n"
                     f"{_other}"
                     f"Estas líneas tienen números pero no se pudieron leer:\n\n```\n{_broken}\n```\n\n"
-                    "✏️ **TODO 2:** mira el final de cada línea. ¿De dónde salió esa "
-                    "letra? Arregla `crop_table` (abre la ayuda de abajo si te atascas)."
+                    "Revisa el recorte y las conversiones de la demostración. "
+                    "Esta validación protege la carga de los dos boletines."
                 ),
                 kind="danger",
             )
@@ -520,7 +554,7 @@ def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
 def _():
     mo.accordion(
         {
-            "💡 Ayuda para el TODO 2": mo.md(
+            "Para consultar: los dos métodos de recorte": mo.md(
                 "pdfplumber tiene dos formas de recortar una página:\n\n"
                 "* `page.crop(bbox)` conserva los caracteres que **tocan** la caja.\n"
                 "* `page.within_bbox(bbox)` conserva solo los que están **completamente adentro**.\n\n"
@@ -532,11 +566,11 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(find_table, checkpoint_1, con, read_rows, crop_table, path):
     mo.stop(
         not checkpoint_1,
-        mo.md("⏳ *Cuando pases el checkpoint 1, aquí cargamos los dos boletines a la bodega.*"),
+        mo.md("⏳ *La carga espera que los dos boletines coincidan con sus totales.*"),
     )
     _tables = []
     for _key in ("bulletin_26", "bulletin_27"):
@@ -579,7 +613,7 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, path):
     con.execute(
         "CREATE OR REPLACE TABLE bronze.sivigila AS SELECT * FROM read_csv(?, all_varchar = true)",
@@ -617,19 +651,58 @@ def _():
     alguien guarda el archivo desde Excel; por eso el código de abajo los rellena con
     `lpad` por seguridad.)
 
-    ### ✏️ TODO 3 · Convierte `fec_not` en una fecha
-    La fecha es lo que está **antes del primer espacio**. Pistas: `split_part(texto, ' ', 1)`
-    para quedarte con esa parte y `try_strptime(texto, '%d/%m/%Y')` para leerla.
+    ### ✏️ TODO 1 · Elige el formato de la fecha · 8 minutos
+    **Cambia solo el texto entre comillas de `notification_date_format` en la celda
+    siguiente.** Está escrito para año-mes-día; nuestros datos vienen en día/mes/año.
+    Usa `%d` para día, `%m` para mes y `%Y` para año de cuatro cifras, con los mismos
+    separadores que la fuente. Ejecuta la celda con `Ctrl/⌘ + Enter`.
 
-    La muestra sintética usa fechas ISO (`2024-12-02`), que `try_cast(... AS DATE)` ya
-    entiende. Para aceptar ambos formatos, combina las conversiones con `coalesce`,
-    que elige el primer resultado que no sea `NULL`.
+    La plantilla ya separa la fecha de la hora, la convierte a `DATE` y conserva la
+    alternativa ISO para la muestra sintética. No necesitas escribir esas funciones.
+    **Comprueba:** todas las filas deben tener fecha válida. Explica a tu pareja por
+    qué un `NULL` no significa que el caso no tenga fecha en la fuente.
     """)
     return
 
 
 @app.cell
-def _(bronze_sivigila, con):
+def _():
+    # >>> SOLUTION
+    notification_date_format = "%d/%m/%Y"
+    # <<< SOLUTION
+    # >>> STUDENT
+    # # TODO 1: match the source's day/month/year format.
+    # notification_date_format = "%Y-%m-%d"
+    # <<< STUDENT
+    return (notification_date_format,)
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.accordion(
+        {
+            "💡 Pista del TODO 1": mo.md(
+                "En `2/12/2024`, el primer número es el día. Ordena los tres códigos "
+                "como aparecen en la fuente y sepáralos con `/`. La fecha que buscamos "
+                "es el **2 de diciembre de 2024**."
+            ),
+            "🛟 Solución para continuar · fechas": mo.md(
+                'Cambia la línea por `notification_date_format = "%d/%m/%Y"` y ejecútala. '
+                "Después, comprueba los conteos de fechas válidas y explica el resultado "
+                "antes de continuar."
+            ),
+            "Opcional: qué hace la plantilla SQL": mo.md(
+                "`split_part` conserva lo que hay antes del primer espacio; `try_strptime` "
+                "interpreta ese texto con el formato elegido. `CAST` fija el tipo `DATE`. "
+                "`coalesce` usa la conversión ISO alternativa si la primera devuelve `NULL`."
+            ),
+        }
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(bronze_sivigila, con, notification_date_format):
     mo.stop(bronze_sivigila is None)
     con.execute(
         """
@@ -639,22 +712,18 @@ def _(bronze_sivigila, con):
             -- The INS files already include leading zeros ('08', '001'). lpad is a safeguard
             -- for exports that lose them, for example after saving the file from Excel.
             lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,
-            -- >>> SOLUTION
             coalesce(
-                CAST(try_strptime(split_part(trim(fec_not), ' ', 1), '%d/%m/%Y') AS DATE),
+                CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
                 try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
             ) AS notification_date,
-            -- <<< SOLUTION
-            -- >>> STUDENT
-            -- try_cast(fec_not AS DATE) AS notification_date,  -- ✏️ TODO 3: INS dates become NULL. Why?
-            -- <<< STUDENT
             CAST(ano AS INTEGER) AS epi_year,
             CAST(semana AS INTEGER) AS epi_week,
             cod_eve AS event_code,
             ajuste AS adjustment
         FROM bronze.sivigila
-        """
-    )
+        """,
+        [notification_date_format],
+    ).fetchall()
     cases_by_department = con.sql(
         """
         SELECT
@@ -698,31 +767,34 @@ def _(cases_by_department, con):
     checkpoint_2 = _complete and _is_date and _out_of_range == 0
     if checkpoint_2:
         _message = (
-            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
+            "✅ **TODO 1 completo:** el 100 % de los casos tiene municipio y fecha de notificación."
         )
     elif not _complete:
         _message = (
-            "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
-            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
+            "❌ **TODO 1 pendiente:** hay casos sin municipio o fecha de notificación. "
+            "Revisa el formato del TODO 1 y los conteos exactos: los porcentajes están redondeados."
         )
     elif not _is_date:
         _message = (
-            f"❌ **Checkpoint 2:** `notification_date` no está vacía, pero sigue siendo "
-            f"**texto** (`{_date_type}`), no una fecha. Conviértela en el TODO 3 con "
+            f"❌ **TODO 1 pendiente:** `notification_date` no está vacía, pero sigue siendo "
+            f"**texto** (`{_date_type}`), no una fecha. Revisa la plantilla del TODO 1 y "
             "`try_strptime`."
         )
     else:
         _message = (
-            f"❌ **Checkpoint 2:** hay **{_out_of_range:,} fechas** que no caen en el año "
-            "del caso (`ano`) ni en el año vecino. ¿De dónde sale esa fecha? Revisa el TODO 3."
+            f"❌ **TODO 1 pendiente:** hay **{_out_of_range:,} fechas** que no caen en el año "
+            "del caso (`ano`) ni en el año vecino. ¿De dónde sale esa fecha? Revisa el TODO 1."
         )
     mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger")
     return (checkpoint_2,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(checkpoint_2, con, path):
-    mo.stop(not checkpoint_2, mo.md("⏳ *Pasa el checkpoint 2 para seguir.*"))
+    mo.stop(
+        not checkpoint_2,
+        mo.md("⏳ *Completa el TODO 1; tienes una solución para continuar en su ayuda.*"),
+    )
     con.execute(
         "CREATE OR REPLACE TABLE bronze.entities AS SELECT * FROM read_csv(?, all_varchar = true)",
         [str(path("entities"))],
@@ -775,11 +847,14 @@ def _():
     El conjunto de precipitación del IDEAM en datos.gov.co tiene **más de 165 millones
     de filas** (una lectura cada 10 minutos por estación). No lo descargues: pídele a
     la API que **sume por día** del lado del servidor. Así se ve una consulta SoQL:
+
+    **👀 Demostración del facilitador.** La consulta en vivo es opcional; para el
+    ejercicio usamos la copia guardada. Puedes seguir sin pulsar el botón.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     api_button = mo.ui.run_button(
         label="🌧️ Consultar la API del IDEAM en vivo (Valle, últimos 7 días)"
@@ -788,7 +863,7 @@ def _():
     return (api_button,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(api_button):
     mo.stop(
         not api_button.value,
@@ -819,7 +894,7 @@ def _(api_button):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, path):
     con.execute(
         "CREATE OR REPLACE TABLE bronze.ideam AS SELECT * FROM read_parquet(?)",
@@ -852,7 +927,7 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, ideam_names):
     mo.stop(ideam_names is None)
     # Macros are reusable SQL functions.
@@ -870,11 +945,11 @@ def _(con, ideam_names):
         """
     )
     macros_ready = True
-    use_aliases = mo.ui.switch(label="Usar la tabla de alias (CALI → SANTIAGO DE CALI)")
+    use_aliases = mo.ui.switch(value=True, label="Usar la tabla de alias (CALI → SANTIAGO DE CALI)")
     return macros_ready, use_aliases
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, macros_ready, use_aliases):
     mo.stop(not macros_ready)
     _use_aliases = "TRUE" if use_aliases.value else "FALSE"
@@ -912,6 +987,10 @@ def _(con, macros_ready, use_aliases):
     ).pl()
     mo.vstack(
         [
+            mo.md(
+                "**👀 Demostración de alias:** vienen activados. Desactívalos para ver "
+                "qué estaciones pierden su municipio y vuelve a activarlos antes del TODO 2."
+            ),
             use_aliases,
             mo.callout(mo.md("✅ Todas las estaciones encontraron su municipio."), kind="success")
             if missing_municipalities.is_empty()
@@ -945,20 +1024,21 @@ def _():
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, macros_ready):
     mo.stop(not macros_ready)
-    con.sql(
+    _week_comparison = con.sql(
         """
         SELECT CAST(d AS DATE) AS observation_date, dayname(d) AS day,
                week(d) AS iso_week, epi_week(d) AS epidemiological_week
         FROM unnest(generate_series(TIMESTAMP '2026-06-27', TIMESTAMP '2026-07-05', INTERVAL 1 DAY)) AS t(d)
         """
     ).pl()
+    mo.accordion({"Opcional: comparar semanas ISO y epidemiológicas": _week_comparison})
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(weekly_cases_summary, con, missing_municipalities):
     mo.stop(weekly_cases_summary is None or missing_municipalities is None)
     con.execute(
@@ -973,7 +1053,7 @@ def _(weekly_cases_summary, con, missing_municipalities):
     return (entity_rainfall_ready,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, entity_rainfall_ready):
     mo.stop(not entity_rainfall_ready)
     prediction = mo.ui.number(
@@ -994,7 +1074,7 @@ def _(con, entity_rainfall_ready):
     return prediction, reveal
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, prediction, reveal):
     mo.stop(not reveal.value, mo.md("*Escribe tu predicción y pulsa **Revelar**.*"))
     _rows, _inflated_cases = con.sql(
@@ -1022,9 +1102,23 @@ def _(con, prediction, reveal):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ### ✏️ TODO 4 · Lleva la lluvia a una fila por entidad y semana
-    Completa la consulta para que `silver.weekly_rainfall` tenga **una sola fila** por
-    `territorial_entity`, `epi_year` y `epi_week`.
+    ### ✏️ TODO 2 · Combina las estaciones de una semana · 12 minutos
+    La plantilla ya calcula `per_station`: **una fila por estación y semana**, con
+    la suma de sus días de lluvia. También están preparados la llave, el `GROUP BY`
+    y el conteo de estaciones. Debemos obtener **una fila por entidad y semana**.
+
+    | Paso ya resuelto | Resultado de ejemplo |
+    |---|---|
+    | Estación A: 10 + 20 mm en sus días con datos | 30 mm en la semana |
+    | Estación B: 20 + 40 mm en sus días con datos | 60 mm en la semana |
+
+    **Edita solo `sum(mm)` en el SELECT final** de la celda siguiente. La columna
+    pide el **promedio entre los totales semanales de las estaciones**: para el ejemplo
+    debe dar **45 mm**, no 90 mm. Elige entre `sum`, `avg` y `count`.
+
+    Conserva la suma del primer paso y las columnas de agrupación. Después de ejecutar,
+    comprueba tanto la **estructura** como el **cálculo**. Explica a tu pareja qué
+    representa una fila antes y después de cada agrupación.
     """)
     return
 
@@ -1035,7 +1129,6 @@ def _(con, entity_rainfall_ready):
     con.execute(
         """
         CREATE OR REPLACE TABLE silver.weekly_rainfall AS
-        -- >>> SOLUTION
         WITH per_station AS (
             -- First, total weekly rainfall for each station...
             SELECT territorial_entity, station_code,
@@ -1046,19 +1139,15 @@ def _(con, entity_rainfall_ready):
         )
         -- ...then average the stations within each territorial entity.
         SELECT territorial_entity, epi_year, epi_week,
+        -- >>> SOLUTION
                round(avg(mm), 2) AS mean_precipitation_mm,
+        -- <<< SOLUTION
+        -- >>> STUDENT
+        --        round(sum(mm), 2) AS mean_precipitation_mm,  -- TODO 2: combine station totals.
+        -- <<< STUDENT
                count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
-        -- <<< SOLUTION
-        -- >>> STUDENT
-        -- -- ✏️ TODO 4: this returns one row per DAY and station. Aggregate by week.
-        -- SELECT territorial_entity,
-        --        epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,
-        --        precipitation_mm AS mean_precipitation_mm,
-        --        1 AS stations_with_data
-        -- FROM silver.entity_daily_rainfall
-        -- <<< STUDENT
         """
     )
     weekly_rainfall_ready = True
@@ -1069,24 +1158,28 @@ def _(con, entity_rainfall_ready):
 def _():
     mo.accordion(
         {
-            "💡 Ayuda para el TODO 4": mo.md(
-                "Agrupa (`GROUP BY`) por las columnas de la llave: `territorial_entity`, "
-                "`epi_year` y `epi_week`. Las demás columnas necesitan una función de "
-                "agregación (`sum`, `avg`, `count`…). Antes de escribirla, piénsenlo en "
-                "pareja:\n\n"
-                "* `mean_precipitation_mm` es la lluvia **de la semana**, en mm. ¿Sale de "
-                "sumar o de promediar los días? ¿Y qué haces si la entidad tiene varias "
-                "estaciones?\n"
-                "* `stations_with_data` cuenta **estaciones**, no días: cada estación "
-                "aparece una vez por cada día con dato.\n\n"
-                "La definición exacta de cada columna está en `docs/diccionario_de_datos.md`."
-            )
+            "💡 Pista del TODO 2": mo.md(
+                "La primera agrupación ya sumó los días de cada estación. En la segunda, "
+                "`sum` acumula las estaciones, `avg` calcula su promedio y `count` cuenta "
+                "filas. ¿Cuál representa `(30 + 60) / 2`? El conteo de estaciones viene resuelto."
+            ),
+            "🛟 Solución para continuar · agregación": mo.md(
+                "En el SELECT final, usa `round(avg(mm), 2) AS mean_precipitation_mm`. "
+                "Conserva `sum(precipitation_mm)` en `per_station`. Ejecuta y explica por qué "
+                "promediar directamente los días daría otra cantidad."
+            ),
+            "Opcional: seguir investigando": mo.md(
+                "¿Cómo influye que una estación tenga días sin datos? ¿Qué diferencia hay "
+                "entre `count(*)` y `count(DISTINCT station_code)` en cada paso? "
+                "La definición de las columnas está en `docs/diccionario_de_datos.md`; "
+                "las decisiones sobre datos sospechosos quedan en `RETOS.md`."
+            ),
         }
     )
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(bronze_bulletin, con, weekly_rainfall_ready):
     mo.stop(not weekly_rainfall_ready or bronze_bulletin is None)
     con.execute(
@@ -1129,7 +1222,7 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
             make_date(es.epi_year, 1, 4) - CAST(dayofweek(make_date(es.epi_year, 1, 4)) AS INTEGER)
                 + CAST(7 * (es.epi_week - 1) AS INTEGER) AS week_start,
             b.total_cases AS bulletin_cumulative_cases,
-            -- Gold fixes the column types, whatever aggregation TODO 4 used
+            -- Gold fixes the column types, whatever aggregation TODO 2 used
             -- (sum() over DECIMAL stays DECIMAL, which charts cannot serialize).
             CAST(l.mean_precipitation_mm AS DOUBLE) AS mean_precipitation_mm,
             CAST(l.stations_with_data AS BIGINT) AS stations_with_data,
@@ -1191,27 +1284,28 @@ def _(con, gold):
     checkpoint_3 = _duplicates == 0 and gold.height == _weeks * _entities and _right_weeks
     if checkpoint_3:
         _message = (
-            f"✅ **Checkpoint 3:** {gold.height:,} filas = {_entities} entidades × "
-            f"{_weeks} semanas, sin llaves repetidas. **¡Tienes tu tabla oro!** 🥇"
+            f"✅ **Estructura correcta:** {gold.height:,} filas = {_entities} entidades × "
+            f"{_weeks} semanas, sin llaves repetidas. Esto verifica las llaves; "
+            "**el cálculo del TODO 2 se comprueba abajo**."
         )
     elif _duplicates:
         _message = (
-            f"❌ **Checkpoint 3:** hay **{_duplicates:,} filas repetidas** "
-            "(misma entidad y semana). ¿Agrupaste la lluvia por semana en el TODO 4?"
+            f"❌ **Estructura pendiente:** hay **{_duplicates:,} filas repetidas** "
+            "(misma entidad y semana). Revisa las agrupaciones de la plantilla del TODO 2."
         )
     else:
         _message = (
-            "❌ **Checkpoint 3:** tu tabla de lluvia no tiene filas repetidas, pero sus "
+            "❌ **Estructura pendiente:** tu tabla de lluvia no tiene filas repetidas, pero sus "
             "semanas no son las semanas epidemiológicas de los datos: "
             f"**faltan {_missing:,}** combinaciones de entidad y semana y **sobran {_extra:,}**. "
-            "En el TODO 4 conserva `epi_year(observation_date)` y `epi_week(observation_date)` "
+            "En el TODO 2 conserva `epi_year(observation_date)` y `epi_week(observation_date)` "
             "(no uses `week()`: las semanas ISO empiezan en lunes)."
         )
     mo.callout(mo.md(_message), kind="success" if checkpoint_3 else "danger")
     return (checkpoint_3,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(checkpoint_3, final_gold, gold, missing_municipalities):
     mo.stop(not checkpoint_3)
     _mine = gold.group_by("territorial_entity").agg(
@@ -1228,25 +1322,37 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
     _comparison = _mine.join(_repo, on="territorial_entity", how="full", coalesce=True).sort(
         "territorial_entity"
     )
-    # Compare each pair of columns; eq_missing treats null as equal only to null.
+    # Validate every entity-week, not just entity summaries that can hide offsetting errors.
+    _keys = ["territorial_entity", "epi_year", "epi_week"]
     _pairs = {
-        "cases": ("student_cases", "repo_cases"),
-        "stations": ("student_stations", "repo_stations"),
-        "rainfall": ("student_rain_mm", "repo_rain_mm"),
+        "cases": "sivigila_cases",
+        "stations": "stations_with_data",
+        "rainfall": "mean_precipitation_mm",
     }
+    _weekly = gold.select(*_keys, *_pairs.values(), pl.lit(True).alias("student_present")).join(
+        final_gold.select(*_keys, *_pairs.values(), pl.lit(True).alias("repo_present")),
+        on=_keys,
+        how="full",
+        coalesce=True,
+        suffix="_repo",
+    )
+    _present = _weekly["student_present"].fill_null(False) & _weekly["repo_present"].fill_null(
+        False
+    )
     gold_mismatches = [
         _name
-        for _name, (_student, _reference) in _pairs.items()
-        if not _comparison[_student].eq_missing(_comparison[_reference]).all()
+        for _name, _column in _pairs.items()
+        if not (_present & _weekly[_column].eq_missing(_weekly[f"{_column}_repo"])).all()
     ]
     gold_matches_repo = not gold_mismatches
     cases_match = "cases" not in gold_mismatches
+    aggregation_ok = "stations" not in gold_mismatches and "rainfall" not in gold_mismatches
     _hints = {
-        "cases": "**Casos:** `student_cases` no coincide con `repo_cases`. Los TODOs no "
+        "cases": "**Casos:** hay diferencias en `sivigila_cases` por entidad y semana. Los TODOs no "
         "cambian los casos: ¿estás usando otro archivo de SIVIGILA, como la muestra sintética?",
-        "stations": "**Estaciones:** `student_stations` no coincide con `repo_stations`. "
+        "stations": "**Estaciones:** hay diferencias en `stations_with_data` por entidad y semana. "
         "¿Contaste estaciones distintas o filas (una por estación y día)?",
-        "rainfall": "**Lluvia:** `student_rain_mm` no coincide con `repo_rain_mm`. El "
+        "rainfall": "**Lluvia:** hay diferencias en `mean_precipitation_mm` por entidad y semana. El "
         "repositorio suma la lluvia de la semana en cada estación y luego promedia las "
         "estaciones de la entidad (mm por semana). ¿Qué calculaste tú?",
     }
@@ -1254,7 +1360,7 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
         _feedback = mo.callout(
             mo.md(
                 "✅ **¿Coincide con la tabla del inicio? Sí:** casos, estaciones y lluvia "
-                "coinciden."
+                "coinciden en cada entidad y semana. La tabla de abajo resume por entidad."
             ),
             kind="success",
         )
@@ -1275,8 +1381,8 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
     else:
         _feedback = mo.callout(
             mo.md(
-                "💡 **¿Coincide con la tabla del inicio? Casi:** tu tabla tiene el grano "
-                "correcto, pero algunas columnas no coinciden con las del repositorio:\n\n"
+                "💡 **Hay diferencias de valores:** tener una fila por entidad y semana "
+                "no garantiza el cálculo correcto. Revisa estas columnas:\n\n"
                 + "\n".join(f"* {_hints[_name]}" for _name in gold_mismatches)
             ),
             kind="info",
@@ -1285,6 +1391,15 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
     gold.write_parquet(_buffer)
     mo.vstack(
         [
+            mo.callout(
+                mo.md(
+                    "✅ **TODO 2 completo:** lluvia y estaciones coinciden por entidad y semana."
+                    if aggregation_ok
+                    else "⏳ **TODO 2 pendiente:** revisa el cálculo y el detalle de abajo. "
+                    "La ayuda incluye una solución para continuar."
+                ),
+                kind="success" if aggregation_ok else "warn",
+            ),
             _feedback,
             _comparison,
             mo.download(
@@ -1294,7 +1409,7 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
             ),
         ]
     )
-    return cases_match, gold_matches_repo, gold_mismatches
+    return aggregation_ok, cases_match, gold_matches_repo, gold_mismatches
 
 
 @app.cell(hide_code=True)
@@ -1304,7 +1419,7 @@ def _(final_gold, ml_export):
             mo.md(
                 "**Para el taller de ML, usa la tabla oficial** (es la misma del botón de "
                 "la sección 1). La lluvia de la tabla del ejercicio depende de tu "
-                f"solución al TODO 4. La oficial conserva las {final_gold.width} columnas del "
+                f"solución al TODO 2. La oficial conserva las {final_gold.width} columnas del "
                 "diccionario de datos y suma la lluvia semanal por estación "
                 "antes de promediar estaciones."
             ),
@@ -1321,15 +1436,16 @@ def _(final_gold, ml_export):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## 7 · Lo que no cuadra 🕵️
+    ## 7 · Para explorar después del taller 🕵️
 
-    Tu tabla funciona… para el piloto. Pero los datos reales esconden preguntas que
-    **nadie ha resuelto todavía**. Estas son algunas; el resto está en `RETOS.md`.
+    **Material opcional.** En el cierre miraremos una pregunta; las demás quedan para
+    la hackathon. El piloto deja abiertos problemas sobre acumulados, rezagos y datos
+    sospechosos. Estas son algunas preguntas; el resto está en `RETOS.md`.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(bronze_bulletin, con):
     mo.stop(bronze_bulletin is None)
     _changes = con.sql(
@@ -1365,7 +1481,7 @@ def _(bronze_bulletin, con):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(checkpoint_3, gold):
     mo.stop(not checkpoint_3)
     _cali = gold.filter(pl.col("territorial_entity") == "Santiago de Cali").with_columns(
@@ -1395,7 +1511,7 @@ def _(checkpoint_3, gold):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(con, missing_municipalities):
     mo.stop(missing_municipalities is None)
     _unusual = con.sql(
@@ -1419,13 +1535,13 @@ def _(con, missing_municipalities):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     lag = mo.ui.slider(0, 12, value=0, step=1, show_value=True, label="Rezago (semanas)")
     return (lag,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(checkpoint_3, gold, lag, missing_municipalities):
     mo.stop(not checkpoint_3)
     _with_lag = (
@@ -1480,12 +1596,10 @@ def _(checkpoint_3, gold, lag, missing_municipalities):
 
 
 @app.cell(hide_code=True)
-def _(checkpoint_1, checkpoint_2, checkpoint_3, todo1_ok):
+def _(aggregation_ok, checkpoint_2):
     _status = [
-        {"step": "TODO 1 · números colombianos", "ok": todo1_ok},
-        {"step": "Checkpoint 1 · el PDF cuadra (TODO 2)", "ok": checkpoint_1},
-        {"step": "Checkpoint 2 · fechas de notificación (TODO 3)", "ok": checkpoint_2},
-        {"step": "Checkpoint 3 · tabla oro (TODO 4)", "ok": checkpoint_3},
+        {"step": "TODO 1 · formato de fechas", "ok": checkpoint_2},
+        {"step": "TODO 2 · agregación semanal correcta", "ok": aggregation_ok},
     ]
     mo.md(
         "## 8 · Resumen\n\n"
