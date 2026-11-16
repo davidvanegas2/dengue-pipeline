@@ -1,5 +1,5 @@
 -- Silver INS bulletin: cumulative yearly cases by territorial entity.
--- Deriving weekly counts is a workshop challenge (RETOS.md #1).
+-- Deriving weekly counts is a workshop challenge (RETOS.md #2).
 
 CREATE OR REPLACE TABLE silver.bulletin_cumulative_cases AS
 SELECT
