@@ -55,7 +55,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 | 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
 | 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
 | 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
-| 42-45 | **TODO 4 → Checkpoint 3** | `GROUP BY`. Cuando quede en verde: *"esta es su tabla oro; descárguenla para el taller de ML"* | Agrupan y descargan |
+| 42-45 | **TODO 4 → Checkpoint 3** | `GROUP BY`. Cuando quede en verde: *"esta es su tabla oro; descárguenla para el taller de ML"*. Si el mensaje de abajo dice *Casi*, nombra la columna que no coincide: ¿es lo mismo promediar los días que sumar la semana por estación y luego promediar estaciones? | Agrupan y descargan |
 | 45-50 | **7 · Lo que no cuadra** | Las incógnitas 1 (el pasado cambia) y 3 (825 mm). Mueve el deslizador de rezago. Cierra con `RETOS.md`: *"esto es lo que nadie ha resuelto"* | — |
 | 50-60 | Preguntas | — | — |
 
@@ -96,7 +96,7 @@ El checkpoint compara los conteos exactos; los porcentajes se redondean solo par
 | molab no carga los datos | Revisa `REPO_URL` y que el repo sea público |
 | `uv` no está instalado | <https://docs.astral.sh/uv/getting-started/installation/> (un comando) |
 | La API del IDEAM no responde | Es esperado a veces; el notebook sigue con la copia guardada |
-| Alguien se atasca en un TODO | La ayuda (💡) trae una versión válida; el notebook del facilitador, la completa |
+| Alguien se atasca en un TODO | Las pistas están en el texto del TODO y, para los TODOs 2 y 4, en la ayuda (💡); ninguna trae la respuesta. La solución está en el notebook del facilitador |
 | Una celda no se actualiza | En marimo casi nunca pasa; si pasa, menú → *Restart kernel* |
 
 ---
