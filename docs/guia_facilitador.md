@@ -150,10 +150,10 @@ sección 1 y se repite al final de la sección 6; no depende de los TODOs ni de 
 checkpoints, así que quien no termine el ejercicio también se lleva la tabla. Entrega
 los mismos bytes de `data/gold/weekly_dengue_signal.parquet`.
 
-`mi_weekly_dengue_signal.parquet` es el resultado **del ejercicio**: tiene 8 columnas y
-su cálculo de lluvia depende de la solución al TODO 4 y del interruptor de alias. El
-comparativo del notebook solo comprueba los **conteos de casos**, no la igualdad de las
-tablas completas; una entidad que falte en cualquiera de las dos tablas cuenta como
+`mi_weekly_dengue_signal.parquet` es el resultado **del ejercicio**: tiene las mismas 13
+columnas que la oficial, pero su cálculo de lluvia depende de la solución al TODO 4 y del
+interruptor de alias. El comparativo del notebook comprueba **casos, estaciones y lluvia**,
+no la igualdad de las tablas completas; una entidad que falte en cualquiera de las dos tablas cuenta como
 diferencia. No usar el archivo del ejercicio como sustituto del contrato de ML.
 
 Confirmar con quien dicta ML el [diccionario](diccionario_de_datos.md), la llave
@@ -177,7 +177,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 | 12-16 | **TODO 1** | Dales 3 minutos. Las pruebas se ponen en verde solas | Escriben `parse_integer` y `parse_decimal` |
 | 16-22 | **Checkpoint 1 → TODO 2** | Sale en **rojo**: faltan 733 casos. Lee con ellas las líneas rotas (`Putumayo … 66 e`). ¿De dónde salió la "e"? Abre la ayuda. Cambien `crop` por `within_bbox` | Encuentran el error y lo arreglan |
 | 22-24 | Carga a bronce | *"Validar contra el total del propio documento es la mejor prueba que existe"* | — |
-| 24-30 | **4 · SIVIGILA → TODO 3** | Muestra la tabla en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` lanza un error; `TRY_CAST` devuelve `NULL` y permite continuar | Escriben `split_part` + `try_strptime`; conservan las fechas ISO con `coalesce` + `try_cast` |
+| 24-30 | **4 · SIVIGILA → TODO 3** | El checkpoint 2 sale en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` lanza un error; `TRY_CAST` devuelve `NULL` y permite continuar | Escriben `split_part` + `try_strptime`; conservan las fechas ISO con `coalesce` + `try_cast` |
 | 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
 | 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
 | 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
