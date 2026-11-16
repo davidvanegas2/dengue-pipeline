@@ -533,7 +533,9 @@ def _():
     diciembre o el 12 de febrero? Compárala con `ini_sin` en la misma fila
     (`28/11/2024`): no existe el mes 28, así que el formato es **día/mes/año**.
 
-    Si le pides a SQL un `CAST(fec_not AS DATE)`, no falla: devuelve `NULL`, en silencio.
+    Con ese texto, `CAST(fec_not AS DATE)` lanza un error de conversión.
+    `TRY_CAST(fec_not AS DATE)` devuelve `NULL` cuando no puede convertirlo: la consulta
+    sigue ejecutándose, pero pierde la fecha.
     (Los códigos de municipio sí vienen completos, `08` y `001`, pero se pierden si
     alguien guarda el archivo desde Excel; por eso el código de abajo los rellena con
     `lpad` por seguridad.)
@@ -541,6 +543,10 @@ def _():
     ### ✏️ TODO 3 · Convierte `fec_not` en una fecha
     La fecha es lo que está **antes del primer espacio**. Pistas: `split_part(texto, ' ', 1)`
     para quedarte con esa parte y `try_strptime(texto, '%d/%m/%Y')` para leerla.
+
+    La muestra sintética usa fechas ISO (`2024-12-02`), que `try_cast(... AS DATE)` ya
+    entiende. Para aceptar ambos formatos, combina las conversiones con `coalesce`,
+    que elige el primer resultado que no sea `NULL`.
     """)
     return
 
@@ -556,7 +562,7 @@ def _(bronze_sivigila, con):
             -- The INS files already include leading zeros ('08', '001'). lpad is a safeguard
             -- for exports that lose them, for example after saving the file from Excel.
             lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,
-            try_cast(fec_not AS DATE) AS notification_date,  -- ✏️ TODO 3: every date is NULL. Why?
+            try_cast(fec_not AS DATE) AS notification_date,  -- ✏️ TODO 3: INS dates become NULL. Why?
             CAST(ano AS INTEGER) AS epi_year,
             CAST(semana AS INTEGER) AS epi_week,
             cod_eve AS event_code,
@@ -585,14 +591,16 @@ def _(bronze_sivigila, con):
 @app.cell(hide_code=True)
 def _(cases_by_department):
     checkpoint_2 = bool(
-        min(cases_by_department["matched_pct"].min(), cases_by_department["date_pct"].min()) == 100
+        not cases_by_department.is_empty()
+        and (cases_by_department["with_valid_municipality"] == cases_by_department["cases"]).all()
+        and (cases_by_department["with_valid_date"] == cases_by_department["cases"]).all()
     )
     mo.callout(
         mo.md(
             "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
             if checkpoint_2
-            else "❌ **Checkpoint 2:** hay fechas vacías (`NULL`). ¿Qué hace `CAST` con un "
-            "texto como `2/12/2024 12:00:00 a. m.`? Revisa el TODO 3."
+            else "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
+            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
         ),
         kind="success" if checkpoint_2 else "danger",
     )

@@ -50,7 +50,7 @@ del repositorio y las trampas que **ya encontramos** (con evidencia).
 
 | Trampa | Evidencia |
 |---|---|
-| Fechas guardadas como texto en español | `2/12/2024 12:00:00 a. m.` (día/mes/año). `CAST(... AS DATE)` devuelve `NULL` sin avisar; la macro `parse_date_text()` las convierte |
+| Fechas guardadas como texto en español | `2/12/2024 12:00:00 a. m.` (día/mes/año). `CAST(... AS DATE)` lanza un error de conversión; `TRY_CAST(... AS DATE)` devuelve `NULL`. La macro `parse_date_text()` las convierte |
 | Los códigos pueden perder los ceros | Las descargas del INS traen `08` y `001`, pero Excel puede quitarlos o convertirlos en decimales (`8.0`): la macro `dane_code()` limpia y rellena |
 | Casos descartados | Las descargas de 2024 y 2025 traen `ajuste` 0, 3, 5 y 7 (ninguno 6 ni D); el piloto filtra 6 y D por seguridad |
 

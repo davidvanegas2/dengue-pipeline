@@ -51,7 +51,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 | 12-16 | **TODO 1** | Dales 3 minutos. Las pruebas se ponen en verde solas | Escriben `parse_integer` y `parse_decimal` |
 | 16-22 | **Checkpoint 1 → TODO 2** | Sale en **rojo**: faltan 733 casos. Lee con ellas las líneas rotas (`Putumayo … 66 e`). ¿De dónde salió la "e"? Abre la ayuda. Cambien `crop` por `within_bbox` | Encuentran el error y lo arreglan |
 | 22-24 | Carga a bronce | *"Validar contra el total del propio documento es la mejor prueba que existe"* | — |
-| 24-30 | **4 · SIVIGILA → TODO 3** | Muestra la tabla en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` no falla: devuelve `NULL` en silencio | Escriben `split_part` + `try_strptime` |
+| 24-30 | **4 · SIVIGILA → TODO 3** | Muestra la tabla en rojo: 0 % de fechas. Pregunta: *"¿`2/12/2024` es el 2 de diciembre o el 12 de febrero?"* (compárala con `ini_sin`: `28/11/2024`). `CAST` lanza un error; `TRY_CAST` devuelve `NULL` y permite continuar | Escriben `split_part` + `try_strptime`; conservan las fechas ISO con `coalesce` + `try_cast` |
 | 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
 | 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
 | 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
@@ -77,6 +77,10 @@ Trabajan en **parejas**: una escribe, la otra guía.
 > Los casos de SIVIGILA son microdatos reales del INS (2024-2025, eventos 210 y 220). Si
 > cambias el archivo, cambian los números de casos (no los del boletín ni los del IDEAM):
 > revísalos.
+
+La muestra sintética usa fechas ISO: `TRY_CAST` ya las convierte y no reproduce la
+trampa del TODO 3. Usa los datos INS para mostrarla. La solución admite ambos formatos.
+El checkpoint compara los conteos exactos; los porcentajes se redondean solo para mostrarlos.
 
 ### Versión corta (si vas atrasado)
 
