@@ -19,8 +19,6 @@ The gold table is the input of the ML workshop that follows.
   expected/observed columns, temperature/humidity, cleaning suspicious rain days). Do not widen
   the pilot (`PILOT_DEPARTMENTS`, entity and alias reference tables) unless explicitly asked.
   If in doubt, add a question to `RETOS.md` instead of code.
-- **The challenge is confidential until Dec 4.** Never make the repo public or copy challenge
-  details outside it.
 - **SIVIGILA data is synthetic** until `data/raw/sivigila/ORIGEN.txt` says `INS`. Never present
   patterns in it (e.g. rain–case correlations) as findings.
 
@@ -88,7 +86,7 @@ pytest without network tests (slow ones included), and `dengue-pipeline run`.
   SQL). STUDENT blocks are written commented and get uncommented one level. Run
   `make student-notebook` after every edit.
 - Notebooks must be self-contained: never import `dengue_pipeline`. molab syncs only the `.py`
-  file and downloads data from `URL_REPO`. The `DENGUE_REPO_RAIZ` env var overrides the data
+  file and downloads data from `REPO_URL`. The `DENGUE_REPO_ROOT` env var overrides the data
   root (tests use it).
 - marimo rules: each global is defined in exactly one cell; `_`-prefixed names are cell-local.
   marimo does not track DuckDB side effects, so a cell that creates a table must return a

@@ -1,6 +1,6 @@
 # Project shortcuts. On Windows without make, run the corresponding uv command.
 .DEFAULT_GOAL := help
-.PHONY: help install workshop facilitator pipeline pipeline-online format lint test test-fast student-notebook ci clean
+.PHONY: help install workshop facilitator pipeline pipeline-online format lint test test-fast workshop-check workshop-qr student-notebook ci clean
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -39,6 +39,15 @@ test: ## Run all tests with coverage
 
 test-fast: ## Run tests without network access or notebooks
 	uv run pytest -m "not network and not slow"
+
+workshop-check: ## Check workshop readiness offline, including notebook exercises
+	uv sync --locked
+	$(MAKE) lint
+	uv run pytest -m "not network" --cov --cov-report=term-missing
+	$(MAKE) pipeline
+
+workshop-qr: ## Generate local QR images for the repository and molab links
+	uv run scripts/generate_workshop_qr.py
 
 student-notebook: ## Regenerate workshop.py from the facilitator notebook
 	uv run python scripts/generate_student_notebook.py

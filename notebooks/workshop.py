@@ -3,7 +3,7 @@
 # dependencies = [
 #     "altair>=5.4",
 #     "duckdb>=1.4",
-#     "marimo",
+#     "marimo>=0.25.2",
 #     "pdfplumber>=0.11",
 #     "polars>=1.30",
 #     "pyarrow>=18",
@@ -99,6 +99,7 @@ def _():
         or (_directory.parent if _directory is not None else Path.cwd())
     )
     _cache = Path.home() / ".cache" / "dengue-workshop"
+    _refreshed: set[str] = set()
 
     def path(key: str) -> Path:
         """Find a workshop file locally, downloading it when running outside the repository."""
@@ -106,15 +107,25 @@ def _():
         if (_root / _relative).is_file():
             return _root / _relative
         _destination = _cache / _relative
-        if not _destination.is_file():
+        if _relative not in _refreshed:
+            # Download once per session so the cache never serves an old version. Write to a
+            # temporary file first: an interrupted download must not replace a complete copy.
             _destination.parent.mkdir(parents=True, exist_ok=True)
+            _partial = _destination.with_name(_destination.name + ".part")
             try:
-                urllib.request.urlretrieve(f"{REPO_URL}/{_relative}", _destination)
-            except OSError as _error:
-                raise RuntimeError(
-                    f"Could not find or download {_relative}. When running outside the "
-                    "repository, check REPO_URL at the top of the notebook."
-                ) from _error
+                # read() raises if the connection closes before the whole file arrives.
+                with urllib.request.urlopen(f"{REPO_URL}/{_relative}", timeout=60) as _response:
+                    _partial.write_bytes(_response.read())
+                _partial.replace(_destination)
+            except Exception as _error:  # any network or HTTP failure: use the saved copy
+                _partial.unlink(missing_ok=True)
+                if not _destination.is_file():
+                    raise RuntimeError(
+                        f"Could not find or download {_relative}. When running outside the "
+                        "repository, check REPO_URL at the top of the notebook."
+                    ) from _error
+                print(f"Aviso: no se pudo actualizar {_relative}; uso la copia guardada.")
+            _refreshed.add(_relative)
         return _destination
 
     SIVIGILA_ORIGIN = path("sivigila_origin").read_text(encoding="utf-8").split()[0]
@@ -148,17 +159,19 @@ def _():
 
 @app.cell
 def _(path):
-    final_gold = pl.read_parquet(path("gold"))
+    # The official table for the ML workshop: the exact bytes exported by the pipeline.
+    ml_export = path("gold").read_bytes()
+    final_gold = pl.read_parquet(io.BytesIO(ml_export))
     selected_entity = mo.ui.dropdown(
         sorted(final_gold["territorial_entity"].unique().to_list()),
         value="Santiago de Cali",
         label="Entidad territorial",
     )
-    return selected_entity, final_gold
+    return final_gold, ml_export, selected_entity
 
 
 @app.cell
-def _(selected_entity, final_gold):
+def _(selected_entity, final_gold, ml_export):
     mo.vstack(
         [
             selected_entity,
@@ -169,6 +182,11 @@ def _(selected_entity, final_gold):
                 title=f"{selected_entity.value}: casos y lluvia por semana epidemiológica",
             ),
             final_gold.head(8),
+            mo.download(
+                data=ml_export,
+                filename="weekly_dengue_signal.parquet",
+                label="⬇️ Descargar tabla oficial para ML",
+            ),
         ]
     )
     return
@@ -230,9 +248,18 @@ def _():
     return
 
 
-@app.cell
-def _(path):
-    mo.pdf(src=path("bulletin_26"), initial_page=3, height="55vh")
+@app.cell(hide_code=True)
+def _(path, bulletin_week, bulletin_page):
+    # mo.pdf only opens on initial_page when src is a URL string. Serve the file through
+    # marimo first (what mo.pdf does with a Path) and pass that URL instead.
+    _pdf_path = path(bulletin_week.value)
+    try:
+        from marimo._output.data.data import pdf as _serve_pdf
+
+        _src = _serve_pdf(_pdf_path.read_bytes()).url
+    except Exception:  # private marimo API that may change: fall back to page 1
+        _src = _pdf_path
+    mo.pdf(src=_src, initial_page=bulletin_page, height="55vh")
     return
 
 
@@ -255,21 +282,22 @@ def _(path, bulletin_week):
     def find_table(pdf_path: Path):
         """Find the table by title because its page and number change every week."""
         _title = re.compile(r"Casos notificados de dengue por entidad territorial", re.I)
-        _pdf = pdfplumber.open(pdf_path)
+        # Read the file into memory so no file handle stays open after each run.
+        _pdf = pdfplumber.open(io.BytesIO(pdf_path.read_bytes()))
         for _number, _page in enumerate(_pdf.pages, start=1):
             _matches = _page.search(_title)
             if _matches:
                 return _number, _page, _matches[0]
         raise ValueError(f"Could not find the dengue table in {pdf_path.name}")
 
-    _number, page, title = find_table(path(bulletin_week.value))
+    bulletin_page, page, title = find_table(path(bulletin_week.value))
     _side = "izquierdo" if title["x0"] < page.width / 2 else "derecho"
     mo.md(
-        f"La tabla está en la **página {_number}** del PDF. Su título empieza en "
+        f"La tabla está en la **página {bulletin_page}** del PDF. Su título empieza en "
         f"x = {title['x0']:.0f} de {page.width:.0f} puntos → lado **{_side}**. "
         "Cambia de semana arriba y mira qué pasa. 🔍"
     )
-    return find_table, page, title
+    return bulletin_page, find_table, page, title
 
 
 @app.cell
@@ -1065,7 +1093,10 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
         repo_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
         repo_stations=pl.col("stations_with_data").max(),
     )
-    _comparison = _mine.join(_repo, on="territorial_entity").sort("territorial_entity")
+    # A full join keeps entities that are missing from either table, so they count as differences.
+    _comparison = _mine.join(_repo, on="territorial_entity", how="full", coalesce=True).sort(
+        "territorial_entity"
+    )
     # Compare each pair of columns; eq_missing treats null as equal only to null.
     _pairs = {
         "cases": ("student_cases", "repo_cases"),
@@ -1078,6 +1109,7 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
         if not _comparison[_student].eq_missing(_comparison[_reference]).all()
     ]
     gold_matches_repo = not gold_mismatches
+    cases_match = "cases" not in gold_mismatches
     _hints = {
         "cases": "**Casos:** `student_cases` no coincide con `repo_cases`. Los TODOs no "
         "cambian los casos: ¿estás usando otro archivo de SIVIGILA, como la muestra sintética?",
@@ -1118,20 +1150,41 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
             ),
             kind="info",
         )
-    _filename = io.BytesIO()
-    gold.write_parquet(_filename)
+    _buffer = io.BytesIO()
+    gold.write_parquet(_buffer)
     mo.vstack(
         [
             _feedback,
             _comparison,
             mo.download(
-                data=_filename.getvalue(),
+                data=_buffer.getvalue(),
                 filename="mi_weekly_dengue_signal.parquet",
-                label="⬇️ Descargar mi tabla oro (para el taller de ML)",
+                label="⬇️ Descargar mi tabla del ejercicio",
             ),
         ]
     )
-    return gold_matches_repo, gold_mismatches
+    return cases_match, gold_matches_repo, gold_mismatches
+
+
+@app.cell(hide_code=True)
+def _(final_gold, ml_export):
+    mo.vstack(
+        [
+            mo.md(
+                "**Para el taller de ML, usa la tabla oficial** (es la misma del botón de "
+                "la sección 1). La lluvia de la tabla del ejercicio depende de tu "
+                f"solución al TODO 4. La oficial conserva las {final_gold.width} columnas del "
+                "diccionario de datos y suma la lluvia semanal por estación "
+                "antes de promediar estaciones."
+            ),
+            mo.download(
+                data=ml_export,
+                filename="weekly_dengue_signal.parquet",
+                label="⬇️ Descargar tabla oficial para ML",
+            ),
+        ]
+    )
+    return
 
 
 @app.cell(hide_code=True)

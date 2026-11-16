@@ -30,10 +30,18 @@ Elige **una** de estas tres opciones.
 
 ### Opción A · En el navegador, sin instalar nada (molab)
 
-1. Abre [molab.marimo.io](https://molab.marimo.io) e inicia sesión.
-2. Crea un notebook desde GitHub pegando esta URL:
-   <https://github.com/davidvanegas2/dengue-pipeline/blob/main/notebooks/workshop.py>.
-3. Ejecuta las celdas. Los datos se descargan solos (ver `REPO_URL` al inicio del notebook).
+[![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/davidvanegas2/dengue-pipeline/blob/main/notebooks/workshop.py)
+
+1. Abre el badge e inicia sesión cuando molab lo solicite.
+2. Crea una copia editable en tu cuenta (**Fork**) y ejecútala en un servidor Python
+   (**Server**). La vista previa por sí sola no permite resolver los TODOs; la opción
+   WebAssembly no está validada para las dependencias de este taller.
+3. Ejecuta todas las celdas con ▶. Los datos se descargan solos (ver `REPO_URL` al inicio).
+   Los checkpoints pendientes al abrir son parte del ejercicio.
+
+**Preparación del evento:** este acceso sigue pendiente de un ensayo con cuenta nueva.
+El repositorio se mantiene público para facilitar las pruebas. Consulta el
+[checklist del facilitador](docs/guia_facilitador.md).
 
 ### Opción B · En tu computador (recomendada para la hackathon)
 
@@ -43,7 +51,7 @@ por ti) y Git.
 ```bash
 git clone https://github.com/davidvanegas2/dengue-pipeline.git
 cd dengue-pipeline
-uv sync                                  # instala todo (1-2 minutos)
+uv sync --locked                         # instala las versiones de uv.lock
 uv run dengue-pipeline run                # corre el pipeline completo, sin internet
 uv run marimo edit notebooks/workshop.py   # abre el taller en el navegador
 ```
@@ -66,6 +74,11 @@ Con `make` (macOS / Linux) o con el comando `uv` equivalente (Windows):
 | `make lint` | ver `Makefile` | ruff, sqlfluff, mypy, marimo check |
 | `make format` | `uv run ruff format . && uv run sqlfluff fix sql` | Formatea Python y SQL |
 | `make test` | `uv run pytest --cov` | Todas las pruebas, con cobertura |
+| `make workshop-check` | [Secuencia sin make](docs/guia_facilitador.md#ensayo-técnico-repetible) | Lint, pruebas offline incluidos notebooks y pipeline |
+| `make workshop-qr` | `uv run scripts/generate_workshop_qr.py` | Genera los QR localmente en `docs/assets/` |
+
+`make test-fast` omite los notebooks. Para preparar el taller usa `make workshop-check`;
+la instalación inicial necesita internet. El ensayo con API en vivo va por separado.
 
 La línea de comandos del pipeline tiene ayuda: `uv run dengue-pipeline --help`.
 

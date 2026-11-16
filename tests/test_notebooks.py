@@ -6,14 +6,18 @@ pass at the intended step.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import io
 import shutil
 import sys
+import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import marimo as mo
 import polars as pl
+import pypdfium2 as pdfium
 import pytest
 
 from dengue_pipeline.config import Paths
@@ -27,6 +31,9 @@ import generate_student_notebook as generator  # noqa: E402
 pytestmark = pytest.mark.slow
 
 CHECKPOINTS = ("todo1_ok", "checkpoint_1", "checkpoint_2", "checkpoint_3")
+GOLD = ROOT / "data" / "gold" / "weekly_dengue_signal.parquet"
+REPO_URL_LINE = 'REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"'
+OFFICIAL_DOWNLOAD = "Descargar tabla oficial para ML"
 
 TODO4_STUB = (
     "precipitation_mm AS mean_precipitation_mm,\n"
@@ -106,8 +113,8 @@ TODOS = ("todo1", "todo2", "todo3", "todo4")
 
 def run_app(
     path: Path, monkeypatch: pytest.MonkeyPatch, *, data_root: Path = ROOT
-) -> tuple[list[str], dict[str, Any]]:
-    """Run a marimo notebook as a script; return rendered cell outputs and globals."""
+) -> tuple[Sequence[Any], dict[str, Any]]:
+    """Run a marimo notebook as a script and return its cell outputs and global definitions."""
     monkeypatch.setenv("DENGUE_REPO_ROOT", str(data_root))
     spec = importlib.util.spec_from_file_location(f"nb_{path.stem}", path)
     assert spec is not None
@@ -115,8 +122,7 @@ def run_app(
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     outputs, definitions = module.app.run()
-    rendered = [output.text for output in outputs if isinstance(output, mo.Html)]
-    return rendered, dict(definitions)
+    return outputs, dict(definitions)
 
 
 def run_notebook(
@@ -126,9 +132,21 @@ def run_notebook(
     return run_app(path, monkeypatch, data_root=data_root)[1]
 
 
-def lag_section(rendered: list[str]) -> str:
+def html_outputs(outputs: Sequence[Any], marker: str) -> list[str]:
+    """Return the rendered HTML of every cell output that contains ``marker``."""
+    return [o.text for o in outputs if marker in getattr(o, "text", "")]
+
+
+def assert_ml_contract(export: bytes) -> None:
+    """The official ML table is the committed gold snapshot: 750 rows x 13 columns."""
+    table = pl.read_parquet(io.BytesIO(export))
+    assert table.shape == (750, 13)
+    assert table.select("territorial_entity", "epi_year", "epi_week").n_unique() == 750
+
+
+def lag_section(outputs: Sequence[Any]) -> str:
     """Return the rendered output of the rainfall-lag cell (Incógnita 4)."""
-    (section,) = [text for text in rendered if "Incógnita 4" in text]
+    (section,) = html_outputs(outputs, "Incógnita 4")
     return section
 
 
@@ -158,6 +176,8 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     rendered, definitions = run_app(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].height == 750
+    assert definitions["cases_match"] is True
+    assert_ml_contract(definitions["ml_export"])
     assert definitions["gold"].schema == definitions["final_gold"].schema
     assert (
         definitions["missing_municipalities"].height == 2
@@ -230,11 +250,19 @@ def test_checkpoint_rejects_one_invalid_record_despite_rounded_percentage(
 def test_initial_student_notebook_waits_for_todos(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    definitions = run_notebook(student_with(tmp_path), monkeypatch)
+    outputs, definitions = run_app(student_with(tmp_path), monkeypatch)
     assert definitions["todo1_ok"] is False
     assert definitions["checkpoint_1"] is False
     assert definitions["checkpoint_2"] is False
     assert "checkpoint_3" not in definitions
+    # The official ML table must not depend on the exercises: section 1 and the end of
+    # section 6 offer it even when no TODO is solved.
+    assert_ml_contract(definitions["ml_export"])
+    buttons = html_outputs(outputs, OFFICIAL_DOWNLOAD)
+    assert len(buttons) == 2
+    # Headless runs embed download data as base64: both buttons must carry the gold bytes.
+    gold_base64 = base64.b64encode(GOLD.read_bytes()).decode()
+    assert all(gold_base64 in button for button in buttons)
     # Date trap: municipalities match, but try_cast leaves every date empty, silently.
     by_department = definitions["cases_by_department"]
     assert by_department["matched_pct"].to_list() == [100.0] * by_department.height
@@ -269,6 +297,116 @@ def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -
     path = tmp_path / "modified_facilitator.py"
     path.write_text(code, encoding="utf-8")
     return path
+
+
+@pytest.mark.parametrize(
+    ("selection", "filename", "cover_page", "page_number"),
+    [
+        ("Semana 26 (28 jun – 4 jul 2026)", "extracto_bes_2026_s26.pdf", False, 3),
+        ("Semana 27 (5 – 11 jul 2026)", "extracto_bes_2026_s27.pdf", False, 3),
+        # Both real extracts have the table on page 3. A blank cover page moves it to
+        # page 4, so a hard-coded page number cannot pass this case.
+        ("Semana 26 (28 jun – 4 jul 2026)", "extracto_bes_2026_s26.pdf", True, 4),
+    ],
+)
+def test_pdf_viewer_opens_on_the_table_page(
+    selection: str,
+    filename: str,
+    cover_page: bool,
+    page_number: int,
+    notebook_paths: Paths,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bulletin = notebook_paths.bulletins / filename
+    if cover_page:
+        pdf = pdfium.PdfDocument(bulletin.read_bytes())
+        width, height = pdf[0].get_size()
+        pdf.new_page(width, height, index=0)
+        pdf.save(bulletin)
+        pdf.close()
+    notebook = _modified_facilitator(
+        tmp_path,
+        [('value="Semana 26 (28 jun – 4 jul 2026)"', f'value="{selection}"')],
+    )
+    outputs, definitions = run_app(notebook, monkeypatch, data_root=notebook_paths.root)
+    assert definitions["checkpoint_1"] is True
+    assert definitions["bulletin_page"] == page_number
+    # Check the rendered iframe, not the arguments: mo.pdf silently drops initial_page
+    # unless src is a URL. Headless runs embed the PDF as a data URL; a marimo server
+    # serves the same bytes as ./@file/<size>-<name>.pdf.
+    (viewer,) = html_outputs(outputs, "<iframe")
+    assert base64.b64encode(bulletin.read_bytes()).decode() in viewer
+    assert f"#page={page_number}&view=FitV" in viewer
+
+
+@pytest.mark.parametrize("online", [True, False], ids=["online", "offline"])
+def test_notebook_outside_the_repository_refreshes_its_downloads(
+    online: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Simulate molab: no data next to the notebook, so every file comes from REPO_URL."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    cache = home / ".cache" / "dengue-workshop"
+    cached_gold = cache / GOLD.relative_to(ROOT)
+    if online:
+        # A copy left by an earlier session must be replaced, not served as the ML table.
+        cached_gold.parent.mkdir(parents=True)
+        cached_gold.write_bytes(b"stale")
+        source = ROOT
+    else:
+        # Without a connection, the last complete copies are reused.
+        for directory in ("data/raw", "data/reference", "data/gold"):
+            shutil.copytree(ROOT / directory, cache / directory)
+        source = tmp_path / "unreachable"
+    # An earlier session was interrupted mid-download: its partial file is never served.
+    partial = cached_gold.with_name(cached_gold.name + ".part")
+    partial.write_bytes(GOLD.read_bytes()[:100])
+    requested: list[str] = []
+    original_urlopen = urllib.request.urlopen
+
+    def counting_urlopen(url: str, *args: Any, **kwargs: Any) -> Any:
+        requested.append(url)
+        return original_urlopen(url, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", counting_urlopen)
+    notebook = _modified_facilitator(tmp_path, [(REPO_URL_LINE, f'REPO_URL = "{source.as_uri()}"')])
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir()
+    definitions = run_notebook(notebook, monkeypatch, data_root=empty_root)
+    assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
+    assert definitions["ml_export"] == GOLD.read_bytes()
+    assert cached_gold.read_bytes() == GOLD.read_bytes()
+    assert not list(cache.rglob("*.part"))
+    # Each of the 9 workshop files is requested once per session, although the notebook
+    # asks for some of them (the bulletins) several times.
+    assert len(requested) == len(set(requested)) == 9
+    warned = "no se pudo actualizar" in capsys.readouterr().out
+    assert warned is not online
+
+
+def test_case_comparison_reports_a_missing_entity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entity missing from the exercise table must not count as matching case counts."""
+    notebook = _modified_facilitator(
+        tmp_path,
+        [
+            (
+                "FROM bronze.entities AS e CROSS JOIN weeks AS s",
+                "FROM bronze.entities AS e CROSS JOIN weeks AS s "
+                "WHERE e.entidad_territorial <> 'Buenaventura'",
+            )
+        ],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_3"] is True  # 4 entities x 150 weeks, no duplicates
+    assert definitions["gold"].height == 600
+    assert definitions["cases_match"] is False
 
 
 def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -313,7 +451,7 @@ def test_other_todo4_answers_report_what_differs(
     assert definitions["gold"].schema == definitions["final_gold"].schema
     assert definitions["gold_mismatches"] == mismatches
     assert definitions["gold_matches_repo"] is False
-    assert any("Incógnita 2" in text for text in rendered)  # the chart cell ran
+    assert html_outputs(rendered, "Incógnita 2")  # the chart cell ran
 
 
 @pytest.mark.network
