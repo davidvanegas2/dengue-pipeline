@@ -285,6 +285,10 @@ def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert html_outputs(outputs, marker)
         todo2_mark = "✅" if expected["aggregation_ok"] else "⏳"
         assert summary_marks(outputs) == {"TODO 1": "✅", "TODO 2": todo2_mark}
+        # The scaffold's sum() over DECIMAL must still give the official schema: the
+        # downloaded exercise table and the charts depend on it.
+        assert definitions["gold"].schema == definitions["final_gold"].schema
+        assert html_outputs(outputs, "Incógnita 2")
 
 
 def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -> Path:
@@ -407,20 +411,16 @@ def test_case_comparison_reports_a_missing_entity(
     assert definitions["cases_match"] is False
 
 
-def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Simulate the Reveal button and the municipality-alias switch."""
-    path = _modified_facilitator(
-        tmp_path,
-        [
-            ("not reveal.value", "False"),
-        ],
-    )
-    rendered, definitions = run_app(path, monkeypatch)
-    assert definitions["missing_municipalities"].is_empty()  # aliases allow Cali to match
-    assert definitions["checkpoint_3"] is True
-    assert definitions["gold_matches_repo"] is True
-    assert definitions["gold_mismatches"] == []
-    assert "interruptor de alias" not in lag_section(rendered)  # every entity has rainfall
+def test_reveal_button_shows_the_row_explosion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pressing Reveal shows the numbers quoted in docs/guia_facilitador.md (aliases on)."""
+    path = _modified_facilitator(tmp_path, [("not reveal.value", "False")])
+    rendered, _ = run_app(path, monkeypatch)
+    (reveal,) = html_outputs(rendered, "El cruce tiene")
+    assert "10,354 filas" in reveal
+    assert "1,118,315" in reveal
+    assert "112,908" in reveal
 
 
 def test_student_solution_matches_repository_gold(
@@ -582,13 +582,30 @@ def test_checkpoint_1_validates_both_bulletins(
         [],
         [
             ('value="Semana 26 (28 jun – 4 jul 2026)"', 'value="Semana 27 (5 – 11 jul 2026)"'),
-            ("return page.within_bbox(_bbox)", "return page.crop(_bbox)"),
+            (
+                "return page.within_bbox(table_bbox(page, title))",
+                "return page.crop(table_bbox(page, title))",
+            ),
         ],
     )
     definitions = run_notebook(notebook, monkeypatch)
     assert definitions["bulletin_table"].height == 39  # the selected week reads fine
     assert definitions["checkpoint_1"] is False
     assert "bronze_bulletin" not in definitions
+
+
+def test_checkpoint_1_explains_a_table_it_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A layout change that yields no rows must point at the crop, not at the fixed parsers."""
+    notebook = _modified_facilitator(tmp_path, [('r"^(?P<entity>', 'r"^NO MATCH(?P<entity>')])
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["bulletin_table"].is_empty()
+    assert definitions["checkpoint_1"] is False
+    assert "bronze_bulletin" not in definitions
+    (validation,) = html_outputs(outputs, "Validación del PDF")
+    assert "no contiene la fila" in validation
+    assert "conversiones" not in validation
 
 
 @pytest.mark.parametrize(

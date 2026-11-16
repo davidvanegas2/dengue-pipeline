@@ -285,7 +285,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(path, bulletin_week):
+def _():
     def find_table(pdf_path: Path):
         """Find the table by title because its page and number change every week."""
         _title = re.compile(r"Casos notificados de dengue por entidad territorial", re.I)
@@ -297,6 +297,11 @@ def _(path, bulletin_week):
                 return _number, _page, _matches[0]
         raise ValueError(f"Could not find the dengue table in {pdf_path.name}")
 
+    return (find_table,)
+
+
+@app.cell(hide_code=True)
+def _(bulletin_week, find_table, path):
     bulletin_page, page, title = find_table(path(bulletin_week.value))
     _side = "izquierdo" if title["x0"] < page.width / 2 else "derecho"
     mo.md(
@@ -304,7 +309,7 @@ def _(path, bulletin_week):
         f"x = {title['x0']:.0f} de {page.width:.0f} puntos → lado **{_side}**. "
         "Cambia de semana arriba y mira qué pasa. 🔍"
     )
-    return bulletin_page, find_table, page, title
+    return bulletin_page, page, title
 
 
 @app.cell(hide_code=True)
@@ -384,14 +389,17 @@ def _(parse_decimal, parse_integer):
 
 @app.cell(hide_code=True)
 def _():
-    def crop_table(page, title):
-        """Keep the left or right page column containing the table."""
+    def table_bbox(page, title):
+        """Box of the page column that holds the table, from its title down."""
         _half = page.width / 2
         _x0, _x1 = (0, _half) if title["x0"] < _half else (_half, page.width)
-        _bbox = (_x0, title["top"] - 2, _x1, page.height)
-        return page.within_bbox(_bbox)
+        return (_x0, title["top"] - 2, _x1, page.height)
 
-    return (crop_table,)
+    def crop_table(page, title):
+        """Keep the left or right page column containing the table."""
+        return page.within_bbox(table_bbox(page, title))
+
+    return crop_table, table_bbox
 
 
 @app.cell(hide_code=True)
@@ -424,22 +432,46 @@ def _(parse_decimal, parse_integer):
                 break
         return _rows, _discarded
 
-    return (read_rows,)
+    def table_totals(rows: list[dict]) -> tuple[int, int]:
+        """Return the published Total row and the sum of the entity rows (0 if missing)."""
+        _total = sum(r["total_cases"] for r in rows if r["territorial_entity"] == "Total")
+        _sum = sum(r["total_cases"] for r in rows if r["territorial_entity"] != "Total")
+        return _total, _sum
+
+    return read_rows, table_totals
 
 
 @app.cell(hide_code=True)
-def _(page, title, read_rows):
-    _half = page.width / 2
-    _x0, _x1 = (0, _half) if title["x0"] < _half else (_half, page.width)
-    _bbox = (_x0, title["top"] - 2, _x1, page.height)
+def _(crop_table, find_table, path, read_rows, table_totals):
+    # Extract both bulletins once. The table below, the validation and the bronze load reuse
+    # these rows instead of opening the PDFs again every time the selected week changes.
+    bulletin_extracts = {}
+    for _key in ("bulletin_26", "bulletin_27"):
+        _, _page, _title = find_table(path(_key))
+        _text = crop_table(_page, _title).extract_text()
+        _week = re.search(r"semana epidemiol[oó]gica (\d+) de \d{4}", _text)
+        _rows, _discarded = read_rows(_text)
+        _total, _sum = table_totals(_rows)
+        bulletin_extracts[_key] = {
+            "week": int(_week.group(1)) if _week else None,
+            "rows": _rows,
+            "discarded": _discarded,
+            "total": _total,
+            "sum": _sum,
+        }
+    return (bulletin_extracts,)
+
+
+@app.cell(hide_code=True)
+def _(bulletin_extracts, bulletin_week, page, read_rows, table_bbox, table_totals, title):
+    # Same box, two methods. The within_bbox rows are the ones the notebook loads.
+    _cropped_rows, _ = read_rows(page.crop(table_bbox(page, title)).extract_text())
     _results = []
-    for _method, _cropped in (
-        ("crop", page.crop(_bbox)),
-        ("within_bbox", page.within_bbox(_bbox)),
+    for _method, _rows in (
+        ("crop", _cropped_rows),
+        ("within_bbox", bulletin_extracts[bulletin_week.value]["rows"]),
     ):
-        _rows, _ = read_rows(_cropped.extract_text())
-        _total = sum(r["total_cases"] for r in _rows if r["territorial_entity"] == "Total")
-        _sum = sum(r["total_cases"] for r in _rows if r["territorial_entity"] != "Total")
+        _total, _sum = table_totals(_rows)
         _results.append(
             {
                 "method": _method,
@@ -471,86 +503,73 @@ def _(page, title, read_rows):
 
 
 @app.cell(hide_code=True)
-def _(read_rows, page, crop_table, title):
-    _text = crop_table(page, title).extract_text()
-    _rows, discarded_lines = read_rows(_text)
-    bulletin_table = pl.DataFrame(_rows)
+def _(bulletin_extracts, bulletin_week):
+    bulletin_table = pl.DataFrame(bulletin_extracts[bulletin_week.value]["rows"])
     bulletin_table
-    return discarded_lines, bulletin_table
+    return (bulletin_table,)
 
 
 @app.cell(hide_code=True)
-def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
-    _ready = bulletin_table.height > 0 and bulletin_table["total_cases"].null_count() == 0
-    if not _ready:
-        checkpoint_1 = False
-        _output = mo.callout(
-            mo.md("❌ **Validación del PDF:** revisa las conversiones numéricas."), kind="danger"
+def _(bulletin_extracts, bulletin_week):
+    # Validate every bulletin against its own Total row, not only the selected one:
+    # both are loaded into the warehouse below, and one can read fine while the other
+    # loses rows.
+    _results = [
+        {
+            "key": _key,
+            "label": f"semana {_e['week']}" if _e["week"] else _key,
+            "entities": sum(_r["territorial_entity"] != "Total" for _r in _e["rows"]),
+            "total": _e["total"],
+            "sum": _e["sum"],
+            "broken": [_l for _l in _e["discarded"] if re.search(r"\d+,\d", _l)],
+        }
+        for _key, _e in bulletin_extracts.items()
+    ]
+    # Show the selected bulletin first when more than one fails.
+    _failed = sorted(
+        (_r for _r in _results if not _r["total"] or _r["total"] != _r["sum"]),
+        key=lambda _r: _r["key"] != bulletin_week.value,
+    )
+    checkpoint_1 = not _failed
+    if checkpoint_1:
+        _detail = " y ".join(
+            f"las {_r['entities']} entidades de la {_r['label']} suman **{_r['sum']:,}**"
+            for _r in _results
+        )
+        _message = (
+            f"✅ **Validación del PDF:** {_detail} casos, igual que la fila *Total* de cada "
+            "boletín. Validar contra el propio documento es la mejor prueba que existe."
         )
     else:
-        # Validate every bulletin against its own Total row, not only the selected one:
-        # both are loaded into the warehouse below, and one can read fine while the other
-        # loses rows.
-        _results = []
-        for _key in ("bulletin_26", "bulletin_27"):
-            _, _page, _title = find_table(path(_key))
-            _text = crop_table(_page, _title).extract_text()
-            _week = int(re.search(r"semana epidemiol[oó]gica (\d+) de \d{4}", _text).group(1))
-            _rows, _discarded = read_rows(_text)
-            _total = sum(_r["total_cases"] for _r in _rows if _r["territorial_entity"] == "Total")
-            _total_sum = sum(
-                _r["total_cases"] for _r in _rows if _r["territorial_entity"] != "Total"
-            )
-            _results.append(
-                {
-                    "key": _key,
-                    "week": _week,
-                    "entities": sum(_r["territorial_entity"] != "Total" for _r in _rows),
-                    "total": _total,
-                    "sum": _total_sum,
-                    "broken": [_l for _l in _discarded if re.search(r"\d+,\d", _l)],
-                }
-            )
-        # Show the selected bulletin first when more than one fails.
-        _failed = sorted(
-            (_r for _r in _results if not _r["total"] or _r["total"] != _r["sum"]),
-            key=lambda _r: _r["key"] != bulletin_week.value,
+        _r = _failed[0]
+        _other = (
+            ""
+            if _r["key"] == bulletin_week.value
+            else "El boletín que tienes seleccionado cuadra, pero la bodega carga los "
+            "dos y este otro no.\n\n"
         )
-        checkpoint_1 = not _failed
-        if checkpoint_1:
-            _detail = " y ".join(
-                f"las {_r['entities']} entidades de la semana {_r['week']} suman **{_r['sum']:,}**"
-                for _r in _results
-            )
-            _output = mo.callout(
-                mo.md(
-                    f"✅ **Validación del PDF:** {_detail} casos, igual que la fila *Total* de cada "
-                    "boletín. Validar contra el propio documento es la mejor prueba que existe."
-                ),
-                kind="success",
+        if not _r["total"]:
+            # Without a Total row there is nothing to validate against: the table was not
+            # found where expected, so the PDF layout probably changed.
+            _message = (
+                f"❌ **Validación del PDF ({_r['label']}):** el recorte no contiene la fila "
+                f"*Total* del boletín ({_r['entities']} entidades leídas), así que no hay "
+                "contra qué validar. ¿Cambió el formato o la posición de la tabla en el PDF? "
+                "Revisa el recorte y el patrón de filas de la demostración.\n\n"
+                f"{_other}Esta validación protege la carga de los dos boletines."
             )
         else:
-            _r = _failed[0]
             _broken = "\n".join(_r["broken"])
-            _other = (
-                ""
-                if _r["key"] == bulletin_week.value
-                else "El boletín que tienes seleccionado cuadra, pero la bodega carga los "
-                "dos y este otro no.\n\n"
+            _message = (
+                f"❌ **Validación del PDF ({_r['label']}):** las entidades "
+                f"suman **{_r['sum']:,}**, pero el boletín dice **{_r['total']:,}**. "
+                f"Faltan **{_r['total'] - _r['sum']:,} casos**.\n\n"
+                f"{_other}"
+                f"Estas líneas tienen números pero no se pudieron leer:\n\n```\n{_broken}\n```\n\n"
+                "Revisa el recorte y el patrón de filas de la demostración. "
+                "Esta validación protege la carga de los dos boletines."
             )
-            _output = mo.callout(
-                mo.md(
-                    f"❌ **Validación del PDF (semana {_r['week']}):** las entidades "
-                    f"suman **{_r['sum']:,}**, pero el boletín dice **{_r['total']:,}**. "
-                    f"Faltan **{_r['total'] - _r['sum']:,} casos**.\n\n"
-                    f"{_other}"
-                    f"Estas líneas tienen números pero no se pudieron leer:\n\n```\n{_broken}\n```\n\n"
-                    "Revisa el recorte y las conversiones de la demostración. "
-                    "Esta validación protege la carga de los dos boletines."
-                ),
-                kind="danger",
-            )
-    _output
+    mo.callout(mo.md(_message), kind="success" if checkpoint_1 else "danger")
     return (checkpoint_1,)
 
 
@@ -571,23 +590,17 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(find_table, checkpoint_1, con, read_rows, crop_table, path):
+def _(bulletin_extracts, checkpoint_1, con):
     mo.stop(
         not checkpoint_1,
         mo.md("⏳ *La carga espera que los dos boletines coincidan con sus totales.*"),
     )
-    _tables = []
-    for _key in ("bulletin_26", "bulletin_27"):
-        _, _page, _title = find_table(path(_key))
-        _text = crop_table(_page, _title).extract_text()
-        _week = int(re.search(r"semana epidemiol[oó]gica (\d+) de \d{4}", _text).group(1))
-        _rows, _ = read_rows(_text)
-        _tables.append(
-            pl.DataFrame(_rows).with_columns(
-                epi_year=pl.lit(2026), epi_week=pl.lit(_week), filename=pl.lit(_key)
-            )
+    bulletins_df = pl.concat(
+        pl.DataFrame(_extract["rows"]).with_columns(
+            epi_year=pl.lit(2026), epi_week=pl.lit(_extract["week"]), filename=pl.lit(_key)
         )
-    bulletins_df = pl.concat(_tables)
+        for _key, _extract in bulletin_extracts.items()
+    )
     # Register the DataFrame as a view, then copy it to a warehouse table.
     con.register("bulletins_df", bulletins_df)
     con.execute("CREATE OR REPLACE TABLE bronze.bulletin AS SELECT * FROM bulletins_df")
