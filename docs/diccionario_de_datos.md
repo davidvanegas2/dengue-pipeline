@@ -26,7 +26,7 @@ Una fila por **entidad territorial** y **semana epidemiológica**. Se exporta a
 * `sivigila_cases` y `bulletin_cumulative_cases` **no son comparables directamente**:
   uno es semanal y el otro acumulado (ver `RETOS.md` #2).
 * La lluvia incluye días sospechosos: están contados, no excluidos (ver `RETOS.md` #6).
-* Con la muestra sintética de SIVIGILA, `sivigila_cases` no es real.
+* Si `data/raw/sivigila/ORIGEN.txt` dice `SINTETICO`, `sivigila_cases` no es real.
 
 ## Tablas intermedias (capa plata)
 

@@ -1,2 +1,2 @@
-SINTETICO
-Muestra generada por scripts/generate_sivigila_sample.py. NO son datos reales.
+INS
+Files: Datos_2024_210.xlsx, Datos_2024_220.xlsx, Datos_2025_210.xlsx, Datos_2025_220.xlsx

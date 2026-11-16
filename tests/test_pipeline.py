@@ -169,6 +169,29 @@ def test_missing_sivigila_has_clear_error(tmp_paths: Paths) -> None:
         run_pipeline(tmp_paths)
 
 
+def test_sivigila_dates_are_parsed(ready_warehouse: Warehouse) -> None:
+    """Every notification and symptom-onset date in the source must reach silver."""
+    _, con = ready_warehouse
+    unparsed = _scalar(
+        con,
+        """
+        SELECT count(*) FROM silver.sivigila_cases
+        WHERE notification_date IS NULL OR symptom_onset_date IS NULL
+        """,
+    )
+    assert unparsed == 0
+
+
+def test_unparsed_dates_raise_a_warning(ready_warehouse: Warehouse) -> None:
+    _, con = ready_warehouse
+    assert quality.sivigila_dates_parsed(con).ok
+    con.execute("UPDATE silver.sivigila_cases SET notification_date = NULL")
+    result = quality.sivigila_dates_parsed(con)
+    assert not result.ok
+    assert not result.critical  # gold does not use the dates, so the pipeline can continue
+    assert "fec_not" in result.details
+
+
 def test_checks_detect_duplicates(ready_warehouse: Warehouse) -> None:
     _, con = ready_warehouse
     con.execute(f"INSERT INTO {quality.GOLD_TABLE} SELECT * FROM {quality.GOLD_TABLE} LIMIT 1")

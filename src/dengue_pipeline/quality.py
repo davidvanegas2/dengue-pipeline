@@ -142,6 +142,27 @@ def bulletin_totals_match(con: duckdb.DuckDBPyConnection) -> CheckResult:
     )
 
 
+def sivigila_dates_parsed(con: duckdb.DuckDBPyConnection) -> CheckResult:
+    """Warn when a source date exists in bronze but did not become a DATE in silver."""
+    unparsed: dict[str, int] = {}
+    for source, parsed in (("fec_not", "notification_date"), ("ini_sin", "symptom_onset_date")):
+        in_bronze = _scalar(
+            con,
+            f"SELECT count(*) FROM bronze.sivigila WHERE nullif(trim({source}), '') IS NOT NULL",
+        )
+        in_silver = _scalar(con, f"SELECT count({parsed}) FROM silver.sivigila_cases")
+        if in_bronze > in_silver:
+            unparsed[source] = in_bronze - in_silver
+    return CheckResult(
+        "SIVIGILA dates parsed",
+        not unparsed,
+        "all dates parsed"
+        if not unparsed
+        else ", ".join(f"{source}: {count} unparsed" for source, count in unparsed.items()),
+        critical=False,
+    )
+
+
 CHECKS = (
     unique_key,
     complete_entities,
@@ -150,6 +171,7 @@ CHECKS = (
     bulletin_totals_match,
     stations_without_municipality,
     suspicious_days,
+    sivigila_dates_parsed,
 )
 
 

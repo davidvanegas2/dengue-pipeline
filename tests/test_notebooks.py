@@ -7,15 +7,20 @@ pass at the intended step.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import pytest
+
+from dengue_pipeline.config import Paths
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import generate_sivigila_sample as sample  # noqa: E402
 import generate_student_notebook as generator  # noqa: E402
 
 pytestmark = pytest.mark.slow
@@ -38,8 +43,9 @@ SOLUTIONS: dict[str, list[tuple[str, str]]] = {
     "todo2": [("return page.crop(_bbox)", "return page.within_bbox(_bbox)")],
     "todo3": [
         (
-            "cod_dpto_o || cod_mun_o AS municipality_code,",
-            "lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,",
+            "try_cast(fec_not AS DATE) AS notification_date,",
+            "coalesce(CAST(try_strptime(split_part(trim(fec_not), ' ', 1), '%d/%m/%Y') AS DATE), "
+            "try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)) AS notification_date,",
         )
     ],
     "todo4": [
@@ -56,9 +62,11 @@ SOLUTIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def run_notebook(path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def run_notebook(
+    path: Path, monkeypatch: pytest.MonkeyPatch, *, data_root: Path = ROOT
+) -> dict[str, Any]:
     """Run a marimo notebook as a script and return its global definitions."""
-    monkeypatch.setenv("DENGUE_REPO_ROOT", str(ROOT))
+    monkeypatch.setenv("DENGUE_REPO_ROOT", str(data_root))
     spec = importlib.util.spec_from_file_location(f"nb_{path.stem}", path)
     assert spec is not None
     assert spec.loader is not None
@@ -83,6 +91,13 @@ def status(definitions: dict[str, Any]) -> dict[str, Any]:
     return {c: definitions.get(c, "not executed") for c in CHECKPOINTS}
 
 
+@pytest.fixture
+def notebook_paths(tmp_paths: Paths) -> Paths:
+    """Include the opening gold snapshot when testing modified notebook inputs."""
+    shutil.copytree(ROOT / "data" / "gold", tmp_paths.gold)
+    return tmp_paths
+
+
 def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     definitions = run_notebook(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
@@ -90,6 +105,63 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     assert (
         definitions["missing_municipalities"].height == 2
     )  # CALI and BUGA, until aliases are enabled
+
+
+@pytest.mark.parametrize("variant", ["facilitator", "student"])
+def test_solved_notebooks_support_synthetic_dates(
+    variant: str, notebook_paths: Paths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = sample.generate(notebook_paths)
+    notebook = (
+        ROOT / "notebooks" / "workshop_facilitator.py"
+        if variant == "facilitator"
+        else student_with(tmp_path, "todo1", "todo2", "todo3", "todo4")
+    )
+    definitions = run_notebook(notebook, monkeypatch, data_root=notebook_paths.root)
+    assert definitions["SIVIGILA_ORIGIN"] == "SINTETICO"
+    assert definitions["cases_by_department"]["with_valid_date"].sum() == rows
+    assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
+    assert definitions["gold"].height == 750
+
+
+@pytest.mark.parametrize(
+    ("column", "invalid_value", "valid_count", "percentage"),
+    [
+        ("fec_not", "not a date", "with_valid_date", "date_pct"),
+        ("cod_mun_o", "999", "with_valid_municipality", "matched_pct"),
+    ],
+)
+def test_checkpoint_rejects_one_invalid_record_despite_rounded_percentage(
+    column: str,
+    invalid_value: str,
+    valid_count: str,
+    percentage: str,
+    notebook_paths: Paths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = pl.read_csv(notebook_paths.sivigila_pilot, infer_schema=False)
+    data = (
+        data.with_row_index("row_number")
+        .with_columns(
+            pl.when(pl.col("row_number") == 0)
+            .then(pl.lit(invalid_value))
+            .otherwise(pl.col(column))
+            .alias(column)
+        )
+        .drop("row_number")
+    )
+    data.write_csv(notebook_paths.sivigila_pilot)
+    definitions = run_notebook(
+        ROOT / "notebooks" / "workshop_facilitator.py",
+        monkeypatch,
+        data_root=notebook_paths.root,
+    )
+    by_department = definitions["cases_by_department"]
+    assert by_department["cases"].sum() - by_department[valid_count].sum() == 1
+    assert (by_department[percentage] == 100.0).all()
+    assert definitions["checkpoint_2"] is False
+    assert "gold" not in definitions
+    assert "checkpoint_3" not in definitions
 
 
 def test_initial_student_notebook_waits_for_todos(
@@ -100,11 +172,10 @@ def test_initial_student_notebook_waits_for_todos(
     assert definitions["checkpoint_1"] is False
     assert definitions["checkpoint_2"] is False
     assert "checkpoint_3" not in definitions
-    # Leading-zero trap: all Atlántico cases fail to match.
-    atlantico = definitions["cases_by_department"].filter(
-        definitions["cases_by_department"]["original_department_code"] == "8"
-    )
-    assert atlantico["matched_pct"][0] == 0
+    # Date trap: municipalities match, but try_cast leaves every date empty, silently.
+    by_department = definitions["cases_by_department"]
+    assert by_department["matched_pct"].to_list() == [100.0] * by_department.height
+    assert by_department["date_pct"].to_list() == [0.0] * by_department.height
 
 
 def test_todo1_reveals_cropping_trap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,4 +238,6 @@ def test_student_notebook_has_no_solutions() -> None:
     assert "SOLUTION" not in student
     assert "STUDENT" not in student
     assert "within_bbox" not in student.split("💡 Ayuda para el TODO 2")[0]
-    assert "lpad(cod_dpto_o, 2, '0')" not in student
+    facilitator = (ROOT / "notebooks" / "workshop_facilitator.py").read_text(encoding="utf-8")
+    assert "try_strptime(split_part(" in facilitator  # the check below is not vacuous
+    assert "try_strptime(split_part(" not in student
