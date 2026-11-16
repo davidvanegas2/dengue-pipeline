@@ -17,6 +17,7 @@ coverage.xml
 # marimo (local sessions and exports)
 __marimo__/
 notebooks/__marimo__/
+.workshop/
 
 # Regenerable warehouse and outputs created by `make pipeline`
 data/dengue.duckdb

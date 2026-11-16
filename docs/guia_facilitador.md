@@ -139,9 +139,32 @@ estudiante, la demostración del PDF ya pasa y el TODO 1 de fechas está pendien
 las celdas que necesitan las fechas esperan. En el facilitador, los dos ejercicios
 están completos y la tabla del ejercicio coincide con la oficial en las métricas validadas.
 
+Para ensayar los ejercicios conservando tus respuestas, trabaja en una copia local:
+
+```bash
+mkdir -p .workshop
+cp notebooks/workshop.py .workshop/workshop.py
+uv run marimo edit .workshop/workshop.py
+```
+
+Crea la copia una sola vez: repetir `cp` reemplaza tus respuestas. `.workshop/` queda
+fuera de Git. Si actualizas el facilitador, cierra la sesión del estudiante antes de
+ejecutar `make student-notebook` y vuelve a abrirla después; una sesión que sigue
+abierta puede conservar código anterior. La regeneración actualiza
+`notebooks/workshop.py`, no tu copia de práctica.
+
 **Recorrido de aceptación:**
 
 1. Cambia la entidad de la gráfica y descarga la tabla oficial sin resolver nada.
+   Comprueba que se presenta como **vista previa del resultado oficial**: el mapa
+   y el panel **Refinamiento actual** deben dejar oro pendiente. En el mapa único deben
+   aparecer **6 tablas de bronce, 6 de plata y 1 de oro**, incluidas las pendientes.
+   Pulsa `silver.cases`: su ficha muestra que existe, pero sus fechas necesitan revisión.
+   Pulsa `bronze.divipola` para consultar la referencia sin salir del mapa.
+   Cierra con **Cerrar** o **Esc** y comprueba que conservas la posición de la página.
+   En **Seguir conexiones de**, elige `silver.municipality_entity`: deben verse sus
+   dos entradas en azul y sus dos salidas en verde, con las otras líneas atenuadas.
+   Vuelve a **Todas las tablas**; las 13 tablas siempre deben permanecer visibles.
 2. Cambia el boletín 26 → 27 y comprueba el PDF y la comparación de recortes. Vuelve a
    la semana 26: `crop` pierde 733 casos y `within_bbox` conserva el total. La carga
    utiliza el método correcto sin exigir una edición.
@@ -151,6 +174,8 @@ están completos y la tabla del ejercicio coincide con la oficial en las métric
    desconocido): ambos deben dejar el TODO 1 pendiente con una pista en español, sin error
    de DuckDB.
 4. Desactiva los alias para observar las estaciones sin municipio y vuelve a activarlos.
+   La comparación de nombres debe mostrar los códigos ausentes, y el mapa debe
+   actualizar el estado de la lluvia y sus resultados dependientes.
    Pulsa **Revelar** para ver la multiplicación de filas y casos.
 5. Antes de editar el TODO 2, la estructura puede estar correcta, pero debe decir
    **TODO 2 pendiente**. Cambia `sum(mm)` por `avg(mm)` en el SELECT final; conserva
@@ -158,6 +183,11 @@ están completos y la tabla del ejercicio coincide con la oficial en las métric
 6. Despliega ambas ayudas y soluciones de continuación. Descarga la tabla del ejercicio
    y la oficial. El parquet oficial debe tener **750 filas, 13 columnas, 5 entidades y
    150 semanas**, sin llaves repetidas. Comprueba la legibilidad con el proyector.
+   Abre **Seguir una semana real**: las filas por estación deben conducir a una sola
+   fila de esa entidad y semana. `per_station` se presenta como CTE, no como tabla guardada.
+   Tras completar los ejercicios, vuelve a un formato de fecha inválido: el mapa y
+   sus fichas deben retirar los resultados dependientes anteriores. Abre `gold.signal`:
+   debe quedar pendiente, sin la muestra anterior. Restaura la solución.
 7. Como verificación adicional, abre la sección opcional y mueve el deslizador de rezago.
 
 El notebook no necesita ejecutar antes `dengue-pipeline run`: ya recibe los insumos y
@@ -209,6 +239,76 @@ Proyecta **`notebooks/workshop.py`** y ten `workshop_facilitator.py` en otra pes
 como respaldo. Trabajan en **parejas**: una escribe y la otra explica qué significa el
 resultado; intercambian roles en el segundo ejercicio. Solo editan las dos celdas visibles.
 No expliques el código auxiliar línea por línea: pueden desplegarlo después.
+
+### Hacer visible el refinamiento
+
+Usa las fichas de tabla como parte de la explicación de cada paso, sin añadir otro
+ejercicio. Su secuencia es **cargar → tipar → ubicar → agregar → integrar**; varias
+acciones ocurren dentro de plata. Cada ficha muestra las entradas, la transformación,
+su propósito y, sobre todo, **qué representa una fila**.
+
+El mapa de la sección 2 y el panel lateral muestran el estado actual de las tablas
+del ejercicio. Marimo puede ejecutar varios bloques automáticamente: el estado del
+mapa no indica hasta dónde ha leído una participante. La acción resaltada en cada
+ficha sitúa la explicación. El conteo de tablas disponibles tampoco es un porcentaje
+de calidad: **creada**, **verificación aprobada** y **revisar** tienen significados distintos;
+lee siempre el alcance de la comprobación.
+
+Detente brevemente en estos cambios:
+
+- **Fechas:** el mismo texto pasa a una fecha interpretable; seguimos al nivel de caso.
+- **Ubicación:** el alias permite encontrar un código común. En la lluvia todavía
+  tenemos estación × día, incluso después de añadir la entidad territorial.
+- **Agregación:** los días se suman por estación y semana; luego se combinan las
+  estaciones de la entidad. El acordeón de una semana real permite seguir los
+  valores del ejercicio, incluidos los incorrectos antes de resolver el TODO 2.
+- **Integración:** el calendario de oro añade combinaciones sin observaciones.
+  Más filas no significa más casos; un vacío no equivale automáticamente a cero.
+
+El mapa reúne las **13 tablas y todas sus dependencias** en una sola vista, con columnas
+de **bronce → plata → oro**. Dentro de plata, las flechas distinguen los pasos de tipado,
+ubicación y agregación. Las tres fuentes y las tres referencias (DIVIPOLA, alias y
+entidades) forman las seis tablas de bronce; cada tabla tiene una descripción breve
+de su función. Oro reserva una entrada identificada para cada aporte: años, entidades,
+casos semanales, límite del calendario, días sospechosos, acumulados y lluvia semanal.
+
+Para explicar un cruce, usa **Seguir conexiones de**. Las **entradas** a esa tabla se
+resaltan en azul; las **salidas** hacia otras tablas, en verde. Las otras líneas se
+atenúan y una lista encima del mapa identifica las entradas y los consumidores por
+nombre. Las tablas permanecen visibles. Con **Todas las tablas**, puedes explorar
+pasando el cursor o enfocando una tabla con Tab. Las líneas continuas transportan las
+medidas; las discontinuas aportan referencias, calendario o señales de calidad.
+Las flechas terminan en la tabla que consume la entrada; un cruce de líneas no crea
+una relación adicional.
+
+Durante la explicación, sigue primero `bronze.sivigila` → `silver.cases` →
+`silver.weekly_cases`; después la ruta de lluvia. Usa `silver.municipality_entity`
+para mostrar por qué ambas rutas necesitan una referencia territorial común.
+Termina en `gold.signal` y lee qué aporta cada entrada al resultado integrado.
+
+Para consultar una tabla, **pulsa su nodo**: la misma ficha del recorrido se abre sobre
+el mapa, con sus entradas, propósito, comprobación y hasta cinco filas actuales. Cierra
+con **Cerrar**, **Esc** o un clic fuera para seguir en el mismo lugar. También puedes
+usar **Tab** y **Enter** para abrir las fichas. Las tablas pendientes permiten leer su
+propósito, pero no muestran muestras anteriores. En una pantalla estrecha, desplaza
+el mapa horizontalmente para mantener legibles los nombres.
+El mapa representa las tablas del notebook: `gold.signal` es el resultado del ejercicio;
+`gold.weekly_dengue_signal` es la tabla del paquete que alimenta el archivo oficial.
+El boletín entra directamente a oro en el notebook; el paquete tiene además
+`silver.bulletin_cumulative_cases`.
+
+Las muestras, los conteos y los estados se calculan durante la ejecución. Al cambiar
+una entrada, se retiran de las fichas las muestras de sus dependientes
+hasta que vuelvan a ejecutarse, aunque sus tablas anteriores sigan en memoria.
+La tabla oficial del inicio permanece disponible como referencia y entrega para ML.
+
+**Verificación local del 16 de noviembre:** formato y lint aprobados, 144 pruebas
+rápidas aprobadas (una omitida por usar datos INS) y 34 pruebas del notebook sin red
+aprobadas. En Chrome local se recorrieron los estados inicial, fechas resueltas y
+ambos ejercicios resueltos; se desactivaron y reactivaron los alias y se comprobó
+que un formato de fecha inválido retira del mapa los resultados dependientes.
+También se revisaron el mapa por columnas, el foco de entradas y salidas, las siete
+entradas identificadas de oro y la apertura de fichas desde sus nodos.
 
 | Min | Sección del notebook | Qué haces | Qué hacen ellas |
 |---|---|---|---|
