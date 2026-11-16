@@ -13,14 +13,10 @@ preguntas difíciles abiertas para la hackathon (`RETOS.md`).
 ejercicios ya se pueden ensayar localmente. Los checks técnicos no reemplazan el ensayo
 con participantes, la prueba en Windows ni la coordinación con ML y la organización.
 
-**Primero, resolver el acceso:** GitHub reporta el repositorio como **público**, pero
-[`AGENTS.md`](../AGENTS.md) exige confidencialidad hasta el 4 de diciembre. No se cambió
-la visibilidad durante esta revisión. La documentación de
-[molab](https://docs.marimo.io/guides/molab/#sharing) indica que sus notebooks son públicos
-por defecto, aunque no aparezcan en búsquedas. Ensaya localmente hasta resolver esta
-contradicción con el responsable del taller; no publiques una copia del reto para probar.
-Si se restringe GitHub, las descargas anónimas de `REPO_URL` dejarán de funcionar fuera
-del clon local y habrá que volver a validar el acceso antes del evento.
+**Acceso para pruebas:** el responsable del taller confirmó el 15 de noviembre de 2026
+que el repositorio se mantiene **público** para probar y revisar el material. La prueba
+de molab con una cuenta nueva sigue pendiente; el acceso público permite verificar
+las descargas de `REPO_URL`.
 
 ### Preparación técnica
 
@@ -29,7 +25,7 @@ del clon local y habrá que volver a validar el acceso antes del evento.
       dengue grave (220), años 2024 y 2025. Luego `make pipeline` y versiona
       `data/gold/weekly_dengue_signal.parquet`.
 - [x] Crear el [repositorio en GitHub](https://github.com/davidvanegas2/dengue-pipeline).
-      Su rama principal es `main`; la visibilidad requiere la decisión indicada arriba.
+      Su rama principal es `main` y se mantiene público para las pruebas.
 - [x] Configurar `REPO_URL` en `notebooks/workshop_facilitator.py` con
       `https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main`
       y regenerar `notebooks/workshop.py` con `make student-notebook`.
@@ -61,11 +57,11 @@ del clon local y habrá que volver a validar el acceso antes del evento.
 
 ### Validaciones antes de entregar el taller
 
-- [ ] **Resolver la visibilidad y la fecha de distribución** del repositorio y de molab
-      con el responsable del taller, respetando la confidencialidad.
+- [x] **Confirmar el acceso público al repositorio para las pruebas**, por decisión del
+      responsable del taller el 15 de noviembre de 2026.
 - [ ] Incorporar estos cambios a la versión que se entregará y repetir la verificación
       de los enlaces y datos sobre esa versión.
-- [ ] Probar el notebook en **molab con una cuenta nueva**, una vez autorizado el acceso:
+- [ ] Probar el notebook en **molab con una cuenta nueva**:
       abrir el badge, crear una copia editable (**Fork**), usar un servidor Python
       (**Server**), ejecutar las celdas, resolver los TODOs y descargar el parquet oficial.
       Una vista previa estática no basta; WebAssembly no está validado para este taller.
@@ -210,7 +206,7 @@ El checkpoint compara los conteos exactos; los porcentajes se redondean solo par
 
 | Problema | Solución |
 |---|---|
-| molab no carga los datos | Revisa `REPO_URL`, la versión publicada y el acceso autorizado. Si GitHub es privado, usa el clon local; no lo hagas público para sortear el error |
+| molab no carga los datos | Revisa `REPO_URL`, la versión publicada y que las URLs de los datos respondan sin iniciar sesión. Como alternativa, usa el clon local |
 | molab muestra solo una vista previa | Crea una copia editable (**Fork**) y ejecútala en **Server**; luego pulsa ▶ |
 | marimo muestra celdas sin resultados al abrir | Pulsa ▶ para ejecutar todas; los checkpoints pendientes del estudiante son intencionales |
 | `uv` no está instalado | <https://docs.astral.sh/uv/getting-started/installation/> (un comando) |

@@ -19,8 +19,6 @@ The gold table is the input of the ML workshop that follows.
   expected/observed columns, temperature/humidity, cleaning suspicious rain days). Do not widen
   the pilot (`PILOT_DEPARTMENTS`, entity and alias reference tables) unless explicitly asked.
   If in doubt, add a question to `RETOS.md` instead of code.
-- **The challenge is confidential until Dec 4.** Never make the repo public or copy challenge
-  details outside it.
 - **SIVIGILA data is synthetic** until `data/raw/sivigila/ORIGEN.txt` says `INS`. Never present
   patterns in it (e.g. rain–case correlations) as findings.
 

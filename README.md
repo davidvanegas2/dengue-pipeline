@@ -40,8 +40,8 @@ Elige **una** de estas tres opciones.
    Los checkpoints pendientes al abrir son parte del ejercicio.
 
 **Preparación del evento:** este acceso sigue pendiente de un ensayo con cuenta nueva.
-Antes de la liberación del reto, usa la opción local; no cargues contenido confidencial
-en molab. Consulta el [checklist del facilitador](docs/guia_facilitador.md).
+El repositorio se mantiene público para facilitar las pruebas. Consulta el
+[checklist del facilitador](docs/guia_facilitador.md).
 
 ### Opción B · En tu computador (recomendada para la hackathon)
 
