@@ -41,19 +41,29 @@ las descargas de `REPO_URL`.
 - [x] Instalar las **76 dependencias de `uv.lock` en un entorno virtual nuevo en macOS**
       (Python 3.12.11). Esto comprueba la instalación, no equivale a un computador limpio.
 - [x] Ejecutar `make format`, `make lint` y `make test-fast`: **133 aprobadas, 1 omitida**
-      (las 15 excluidas incluyen notebooks y red).
-- [x] Ejecutar `make workshop-check` desde el entorno nuevo: **146 pruebas aprobadas,
-      1 omitida y 2 de red excluidas**, cobertura del paquete **95 %**; pipeline con
-      **750 filas** y sin errores críticos. El snapshot oro coincide con una ejecución nueva.
+      (las 19 excluidas incluyen notebooks y red).
+- [x] Ejecutar `make workshop-check`: **150 pruebas aprobadas, 1 omitida y 2 de red
+      excluidas**, cobertura del paquete **95 %**; pipeline con **750 filas** y sin errores
+      críticos. El snapshot oro coincide con una ejecución nueva. La primera corrida fue en
+      el entorno nuevo; después de corregir el visor PDF y la descarga oficial se repitió en
+      el entorno del repositorio.
 - [x] Ejecutar por separado `uv run pytest -m network -v`: **2 aprobadas**, incluida la
       consulta que exige recibir datos del IDEAM. Repetir cerca del evento.
 - [x] Abrir estudiante y facilitador en **marimo 0.25.2 + Chrome en macOS**: los estados
       iniciales del estudiante son los esperados y el facilitador muestra los cuatro
       indicadores en verde. Esto verifica la apertura, no todo el recorrido manual.
-- [x] Corregir el visor PDF para seguir el selector de boletín y la página encontrada;
-      las pruebas verifican ambos archivos y sus páginas.
-- [x] Separar la descarga del ejercicio de la **tabla oficial para ML** y comprobar por
-      HTTP local que marimo entrega exactamente los **10 415 bytes** del parquet oficial.
+- [x] Corregir el visor PDF: marimo solo respeta `initial_page` cuando recibe una URL, así
+      que el notebook sirve el archivo y abre el visor en la página donde encontró la
+      tabla. Verificado en **Chrome 157 (headless) con marimo 0.25.2** en ambos notebooks:
+      semana 26 abre en la página 3 de 6, semana 27 en la página 3 de 7, y el visor sigue
+      el selector al cambiar de semana y volver. Las pruebas revisan el `#page=` del visor,
+      también con un PDF donde la tabla queda en la página 4. Sin verificar: Safari,
+      Firefox y molab.
+- [x] Separar la descarga del ejercicio de la **tabla oficial para ML**. El botón oficial
+      está en la sección 1 y al final de la sección 6, sin depender de los TODOs. Con un
+      servidor marimo local, ambos botones entregan exactamente los **10 415 bytes** del
+      parquet oficial (mismo SHA-256), también en la versión del estudiante sin resolver.
+      Falta probar la descarga a disco desde el navegador (recorrido de aceptación).
 
 ### Validaciones antes de entregar el taller
 
@@ -135,13 +145,16 @@ se omite porque `ORIGEN.txt` ya dice `INS`.
 ### Entrega al taller de ML
 
 La entrada acordada debe ser **`weekly_dengue_signal.parquet`**, exportada por el pipeline
-y disponible en el botón **Descargar tabla oficial para ML**. Ese botón entrega los
-mismos bytes de `data/gold/weekly_dengue_signal.parquet`.
+y disponible en el botón **Descargar tabla oficial para ML**. El botón está en la
+sección 1 y se repite al final de la sección 6; no depende de los TODOs ni de los
+checkpoints, así que quien no termine el ejercicio también se lleva la tabla. Entrega
+los mismos bytes de `data/gold/weekly_dengue_signal.parquet`.
 
 `mi_weekly_dengue_signal.parquet` es el resultado **del ejercicio**: tiene 8 columnas y
 su cálculo de lluvia depende de la solución al TODO 4 y del interruptor de alias. El
 comparativo del notebook solo comprueba los **conteos de casos**, no la igualdad de las
-tablas completas. No usar el archivo del ejercicio como sustituto del contrato de ML.
+tablas completas; una entidad que falte en cualquiera de las dos tablas cuenta como
+diferencia. No usar el archivo del ejercicio como sustituto del contrato de ML.
 
 Confirmar con quien dicta ML el [diccionario](diccionario_de_datos.md), la llave
 `territorial_entity` + `epi_year` + `epi_week`, los casos semanales frente a los acumulados
@@ -158,7 +171,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 
 | Min | Sección del notebook | Qué haces | Qué hacen ellas |
 |---|---|---|---|
-| 0-5 | Portada + **1 · Empieza por el final** | Cuenta la historia: *"cada semana una secretaría abre un PDF…"*. Muestra la gráfica final y cambia de entidad | Escanean el QR y abren el notebook |
+| 0-5 | Portada + **1 · Empieza por el final** | Cuenta la historia: *"cada semana una secretaría abre un PDF…"*. Muestra la gráfica final y cambia de entidad. Señala el botón de la **tabla oficial para ML** debajo de la tabla | Escanean el QR y abren el notebook |
 | 5-8 | **2 · El mapa** | Bronce = mercado, plata = *mise en place*, oro = plato. Única "teoría" del taller | Escuchan |
 | 8-12 | **3 · PDF**: el visor y el selector de semana | Pregunta: *"¿cómo sacarían esta tabla, cada semana, para siempre?"*. Cambia de la semana 26 a la 27: cambia el número de tabla y el lado. En ambos extractos está en la página 3. **Vuelve a la semana 26** antes del TODO 1 | Responden en voz alta |
 | 12-16 | **TODO 1** | Dales 3 minutos. Las pruebas se ponen en verde solas | Escriben `parse_integer` y `parse_decimal` |
@@ -168,7 +181,7 @@ Trabajan en **parejas**: una escribe, la otra guía.
 | 30-35 | **5 · IDEAM** | 165 millones de filas: *"no se descarga, se le pregunta"*. Pulsa el botón de la API en vivo. Muestra el cambio `VALLE DEL CAUCA` → `Valle Del Cauca` | — |
 | 35-37 | **¿Dónde está Cali?** | Sale la alerta: `CALI` vs `SANTIAGO DE CALI`. Pide a alguien activar el interruptor de alias y señala cómo se recalcula todo | Activan el interruptor |
 | 37-42 | **6 · Cruzar**: semana ISO vs epidemiológica; **🤔 Predice** | Que cada pareja escriba su predicción y revelen. Explica la explosión de filas | Predicen y revelan |
-| 42-45 | **TODO 4 → Checkpoint 3** | `GROUP BY`. Cuando quede en verde, distingue el resultado del ejercicio de la **tabla oficial para ML**; señala los dos botones | Agrupan y descargan la tabla oficial para ML |
+| 42-45 | **TODO 4 → Checkpoint 3** | `GROUP BY`. Cuando quede en verde, distingue el resultado del ejercicio de la **tabla oficial para ML**; señala los dos botones. Quien no llegue al verde también tiene el botón oficial, justo debajo y en la sección 1 | Agrupan y descargan la tabla oficial para ML |
 | 45-50 | **7 · Lo que no cuadra** | Las incógnitas 1 (el pasado cambia) y 3 (825 mm). Mueve el deslizador de rezago. Cierra con `RETOS.md`: *"esto es lo que nadie ha resuelto"* | — |
 | 50-60 | Preguntas | — | — |
 
@@ -213,6 +226,8 @@ El checkpoint compara los conteos exactos; los porcentajes se redondean solo par
 | La API del IDEAM no responde | Es esperado a veces; el notebook sigue con la copia guardada |
 | Alguien se atasca en un TODO | La ayuda (💡) trae una versión válida; el notebook del facilitador, la completa |
 | Una celda no se actualiza | En marimo casi nunca pasa; si pasa, menú → *Restart kernel* |
+| El visor PDF abre en la página 1 | Algún navegador puede ignorar la página inicial. El texto bajo el selector dice en qué página está la tabla: ve a ella a mano |
+| Aparece "no se pudo actualizar …; uso la copia guardada" | Fuera del repositorio (molab), el notebook vuelve a descargar los datos en cada sesión. Si GitHub no responde, usa la última copia completa; revisa la conexión y `REPO_URL` |
 
 ---
 

@@ -27,7 +27,8 @@ def main() -> None:
         for extension in ("svg", "png"):
             path = output / f"qr_{name}.{extension}"
             qr.save(path, scale=10, border=4, light="white", dark="black")
-            print(f"QR creado: {path.relative_to(ROOT)} → {url}")
+            # ASCII only: Windows consoles and redirected output may not encode arrows.
+            print(f"QR creado: {path.relative_to(ROOT)} -> {url}")
 
 
 if __name__ == "__main__":

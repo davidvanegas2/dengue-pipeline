@@ -86,7 +86,7 @@ pytest without network tests (slow ones included), and `dengue-pipeline run`.
   SQL). STUDENT blocks are written commented and get uncommented one level. Run
   `make student-notebook` after every edit.
 - Notebooks must be self-contained: never import `dengue_pipeline`. molab syncs only the `.py`
-  file and downloads data from `URL_REPO`. The `DENGUE_REPO_RAIZ` env var overrides the data
+  file and downloads data from `REPO_URL`. The `DENGUE_REPO_ROOT` env var overrides the data
   root (tests use it).
 - marimo rules: each global is defined in exactly one cell; `_`-prefixed names are cell-local.
   marimo does not track DuckDB side effects, so a cell that creates a table must return a
