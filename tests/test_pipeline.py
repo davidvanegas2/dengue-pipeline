@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import duckdb
 import polars as pl
@@ -10,7 +11,7 @@ import pytest
 
 from dengue_pipeline import quality, warehouse
 from dengue_pipeline.config import Paths
-from dengue_pipeline.pipeline import run_pipeline
+from dengue_pipeline.pipeline import export_gold, run_pipeline
 
 Warehouse = tuple[Paths, duckdb.DuckDBPyConnection]
 
@@ -149,9 +150,51 @@ def test_suspicious_days_are_flagged_not_removed(ready_warehouse: Warehouse) -> 
     )
 
 
+def test_codes_exported_as_float_text_do_not_change_case_counts(
+    repo_paths: Paths, tmp_paths: Paths
+) -> None:
+    """A CSV round trip turns 210 into '210.0'; cases must still be counted and filtered."""
+    columns = ["cod_eve", "ajuste", "pac_hos", "tip_cas", "con_fin"]
+    source = pl.read_csv(tmp_paths.sivigila_pilot, infer_schema=False, encoding="utf8-lossy")
+    source.with_columns(
+        pl.when(pl.col(c).str.contains(r"^\d+$")).then(pl.col(c) + ".0").otherwise(pl.col(c))
+        for c in columns
+    ).write_csv(tmp_paths.sivigila_pilot)
+
+    summary = run_pipeline(tmp_paths)
+    assert summary.ok, [str(v) for v in summary.checks]
+
+    columns_sql = "sum(sivigila_cases), sum(sivigila_severe_cases)"
+    expected = duckdb.sql(
+        f"SELECT {columns_sql} FROM read_parquet(?)",
+        params=[str(repo_paths.gold / "weekly_dengue_signal.parquet")],
+    ).fetchall()
+    con = warehouse.connect(tmp_paths.database)
+    try:
+        actual = con.sql(f"SELECT {columns_sql} FROM {quality.GOLD_TABLE}").fetchall()
+        hospitalized = _scalar(con, "SELECT sum(hospitalized) FROM silver.sivigila_weekly_cases")
+    finally:
+        con.close()
+    assert actual == expected
+    assert isinstance(hospitalized, int)
+    assert hospitalized > 0
+
+
 def test_exports_gold(ready_warehouse: Warehouse) -> None:
     paths, con = ready_warehouse
     exported = pl.read_parquet(paths.gold / "weekly_dengue_signal.parquet")
+    assert exported.height == warehouse.count_rows(con, quality.GOLD_TABLE)
+
+
+def test_exports_gold_to_path_with_apostrophe_spaces_and_accents(
+    ready_warehouse: Warehouse, tmp_path: Path
+) -> None:
+    """Home folders such as ``C:\\Users\\María D'Costa`` must not break the export SQL."""
+    _, con = ready_warehouse
+    directory = tmp_path / "María D'Costa" / "gold dir"
+    outputs = export_gold(con, directory)
+    assert [p.name for p in outputs] == ["weekly_dengue_signal.parquet", "weekly_dengue_signal.csv"]
+    exported = pl.read_parquet(directory / "weekly_dengue_signal.parquet")
     assert exported.height == warehouse.count_rows(con, quality.GOLD_TABLE)
 
 

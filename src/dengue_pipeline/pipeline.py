@@ -89,7 +89,9 @@ def export_gold(con: duckdb.DuckDBPyConnection, directory: Path) -> list[Path]:
     outputs = []
     for extension, file_format in (("parquet", "PARQUET"), ("csv", "CSV, HEADER")):
         path = directory / f"weekly_dengue_signal.{extension}"
-        con.execute(f"COPY {quality.GOLD_TABLE} TO '{path.as_posix()}' (FORMAT {file_format})")
+        # COPY takes no bound parameters, so quote the path as a SQL literal ourselves.
+        target = path.as_posix().replace("'", "''")
+        con.execute(f"COPY {quality.GOLD_TABLE} TO '{target}' (FORMAT {file_format})").fetchall()
         outputs.append(path)
     return outputs
 

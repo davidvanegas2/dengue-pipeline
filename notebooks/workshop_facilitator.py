@@ -442,7 +442,7 @@ def _(read_rows, page, crop_table, title):
 
 
 @app.cell(hide_code=True)
-def _(discarded_lines, bulletin_table):
+def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
     _ready = bulletin_table.height > 0 and bulletin_table["total_cases"].null_count() == 0
     if not _ready:
         checkpoint_1 = False
@@ -450,25 +450,62 @@ def _(discarded_lines, bulletin_table):
             mo.md("⏳ **Checkpoint 1:** completa primero el TODO 1."), kind="neutral"
         )
     else:
-        _is_total = pl.col("territorial_entity") == "Total"
-        _total = bulletin_table.filter(_is_total)["total_cases"].sum()
-        _total_sum = bulletin_table.filter(~_is_total)["total_cases"].sum()
-        checkpoint_1 = bool(_total) and _total == _total_sum
+        # Validate every bulletin against its own Total row, not only the selected one:
+        # both are loaded into the warehouse below, and one can read fine while the other
+        # loses rows.
+        _results = []
+        for _key in ("bulletin_26", "bulletin_27"):
+            _, _page, _title = find_table(path(_key))
+            _text = crop_table(_page, _title).extract_text()
+            _week = int(re.search(r"semana epidemiol[oó]gica (\d+) de \d{4}", _text).group(1))
+            _rows, _discarded = read_rows(_text)
+            _total = sum(_r["total_cases"] for _r in _rows if _r["territorial_entity"] == "Total")
+            _total_sum = sum(
+                _r["total_cases"] for _r in _rows if _r["territorial_entity"] != "Total"
+            )
+            _results.append(
+                {
+                    "key": _key,
+                    "week": _week,
+                    "entities": sum(_r["territorial_entity"] != "Total" for _r in _rows),
+                    "total": _total,
+                    "sum": _total_sum,
+                    "broken": [_l for _l in _discarded if re.search(r"\d+,\d", _l)],
+                }
+            )
+        # Show the selected bulletin first when more than one fails.
+        _failed = sorted(
+            (_r for _r in _results if not _r["total"] or _r["total"] != _r["sum"]),
+            key=lambda _r: _r["key"] != bulletin_week.value,
+        )
+        checkpoint_1 = not _failed
         if checkpoint_1:
+            _detail = " y ".join(
+                f"las {_r['entities']} entidades de la semana {_r['week']} suman **{_r['sum']:,}**"
+                for _r in _results
+            )
             _output = mo.callout(
                 mo.md(
-                    f"✅ **Checkpoint 1:** las {bulletin_table.height - 1} entidades suman "
-                    f"**{_total_sum:,}** casos, igual que la fila *Total* del boletín. "
-                    "Validar contra el propio documento es la mejor prueba que existe."
+                    f"✅ **Checkpoint 1:** {_detail} casos, igual que la fila *Total* de cada "
+                    "boletín. Validar contra el propio documento es la mejor prueba que existe."
                 ),
                 kind="success",
             )
         else:
-            _broken = "\n".join(_l for _l in discarded_lines if re.search(r"\d+,\d", _l))
+            _r = _failed[0]
+            _broken = "\n".join(_r["broken"])
+            _other = (
+                ""
+                if _r["key"] == bulletin_week.value
+                else "El boletín que tienes seleccionado cuadra, pero la bodega carga los "
+                "dos y este otro no.\n\n"
+            )
             _output = mo.callout(
                 mo.md(
-                    f"❌ **Checkpoint 1:** las entidades suman **{_total_sum:,}**, pero el "
-                    f"boletín dice **{_total:,}**. Faltan **{_total - _total_sum:,} casos**.\n\n"
+                    f"❌ **Checkpoint 1 (boletín de la semana {_r['week']}):** las entidades "
+                    f"suman **{_r['sum']:,}**, pero el boletín dice **{_r['total']:,}**. "
+                    f"Faltan **{_r['total'] - _r['sum']:,} casos**.\n\n"
+                    f"{_other}"
                     f"Estas líneas tienen números pero no se pudieron leer:\n\n```\n{_broken}\n```\n\n"
                     "✏️ **TODO 2:** mira el final de cada línea. ¿De dónde salió esa "
                     "letra? Arregla `crop_table` (abre la ayuda de abajo si te atascas)."
@@ -637,21 +674,49 @@ def _(bronze_sivigila, con):
 
 
 @app.cell(hide_code=True)
-def _(cases_by_department):
-    checkpoint_2 = bool(
+def _(cases_by_department, con):
+    _complete = bool(
         not cases_by_department.is_empty()
         and (cases_by_department["with_valid_municipality"] == cases_by_department["cases"]).all()
         and (cases_by_department["with_valid_date"] == cases_by_department["cases"]).all()
     )
-    mo.callout(
-        mo.md(
-            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
-            if checkpoint_2
-            else "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
-            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
-        ),
-        kind="success" if checkpoint_2 else "danger",
+    # A non-NULL value is not enough: the column must be a date, and each date must fall
+    # in the reported year of its case (or the year next to it, at the year boundaries).
+    _type = con.sql("SELECT typeof(notification_date) FROM silver.cases LIMIT 1").fetchall()
+    _date_type = _type[0][0] if _type else None
+    _is_date = _date_type is not None and _date_type.startswith(("DATE", "TIMESTAMP"))
+    _out_of_range = (
+        con.sql(
+            """
+            SELECT count(*) FROM silver.cases
+            WHERE abs(year(notification_date) - epi_year) > 1
+            """
+        ).fetchall()[0][0]
+        if _is_date
+        else 0
     )
+    checkpoint_2 = _complete and _is_date and _out_of_range == 0
+    if checkpoint_2:
+        _message = (
+            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
+        )
+    elif not _complete:
+        _message = (
+            "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
+            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
+        )
+    elif not _is_date:
+        _message = (
+            f"❌ **Checkpoint 2:** `notification_date` no está vacía, pero sigue siendo "
+            f"**texto** (`{_date_type}`), no una fecha. Conviértela en el TODO 3 con "
+            "`try_strptime`."
+        )
+    else:
+        _message = (
+            f"❌ **Checkpoint 2:** hay **{_out_of_range:,} fechas** que no caen en el año "
+            "del caso (`ano`) ni en el año vecino. ¿De dónde sale esa fecha? Revisa el TODO 3."
+        )
+    mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger")
     return (checkpoint_2,)
 
 
@@ -1099,22 +1164,50 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
 
 
 @app.cell(hide_code=True)
-def _(gold):
+def _(con, gold):
     _keys = ["territorial_entity", "epi_year", "epi_week"]
     _duplicates = gold.height - gold.select(_keys).n_unique()
     _weeks = gold.select("epi_year", "epi_week").n_unique()
     _entities = gold["territorial_entity"].n_unique()
-    checkpoint_3 = _duplicates == 0 and gold.height == _weeks * _entities
-    mo.callout(
-        mo.md(
+    # Unique keys are not enough: the gold spine is always complete, so a rainfall table
+    # with the wrong weeks would simply not join. Compare its keys with the epidemiological
+    # weeks that actually have rainfall data.
+    _extra, _missing = con.sql(
+        """
+        WITH expected AS (
+            SELECT DISTINCT territorial_entity,
+                   epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week
+            FROM silver.entity_daily_rainfall
+        ),
+        actual AS (
+            SELECT DISTINCT territorial_entity, epi_year, epi_week FROM silver.weekly_rainfall
+        )
+        SELECT
+            (SELECT count(*) FROM (SELECT * FROM actual EXCEPT SELECT * FROM expected)),
+            (SELECT count(*) FROM (SELECT * FROM expected EXCEPT SELECT * FROM actual))
+        """
+    ).fetchall()[0]
+    _right_weeks = _extra == 0 and _missing == 0
+    checkpoint_3 = _duplicates == 0 and gold.height == _weeks * _entities and _right_weeks
+    if checkpoint_3:
+        _message = (
             f"✅ **Checkpoint 3:** {gold.height:,} filas = {_entities} entidades × "
             f"{_weeks} semanas, sin llaves repetidas. **¡Tienes tu tabla oro!** 🥇"
-            if checkpoint_3
-            else f"❌ **Checkpoint 3:** hay **{_duplicates:,} filas repetidas** "
+        )
+    elif _duplicates:
+        _message = (
+            f"❌ **Checkpoint 3:** hay **{_duplicates:,} filas repetidas** "
             "(misma entidad y semana). ¿Agrupaste la lluvia por semana en el TODO 4?"
-        ),
-        kind="success" if checkpoint_3 else "danger",
-    )
+        )
+    else:
+        _message = (
+            "❌ **Checkpoint 3:** tu tabla de lluvia no tiene filas repetidas, pero sus "
+            "semanas no son las semanas epidemiológicas de los datos: "
+            f"**faltan {_missing:,}** combinaciones de entidad y semana y **sobran {_extra:,}**. "
+            "En el TODO 4 conserva `epi_year(observation_date)` y `epi_week(observation_date)` "
+            "(no uses `week()`: las semanas ISO empiezan en lunes)."
+        )
+    mo.callout(mo.md(_message), kind="success" if checkpoint_3 else "danger")
     return (checkpoint_3,)
 
 

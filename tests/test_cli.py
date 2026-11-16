@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import polars as pl
@@ -62,3 +65,18 @@ def test_prepare_sivigila(isolated_repo: Paths, tmp_path: Path) -> None:
     assert main(["prepare-sivigila", str(download)]) == 0
     assert pl.read_csv(isolated_repo.sivigila_pilot).height == 1
     assert isolated_repo.sivigila_origin.read_text(encoding="utf-8").startswith("INS")
+
+
+def test_cli_output_survives_a_cp1252_stdout(bulletin_27: Path) -> None:
+    """Windows pipes, redirects and Git Bash use cp1252, which cannot encode ✅ or table borders."""
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    process = subprocess.run(
+        [sys.executable, "-m", "dengue_pipeline.cli", "bulletin", str(bulletin_27)],
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr.decode("utf-8", errors="replace")
+    output = process.stdout.decode("utf-8")
+    assert "week 27 of 2026" in output
+    assert "┌" in output  # polars table border, not encodable in cp1252

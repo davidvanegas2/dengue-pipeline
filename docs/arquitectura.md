@@ -19,8 +19,9 @@ flowchart TB
   I --> B
   B -- "sql/silver/*.sql" --> P
   P -- "sql/gold/*.sql" --> O
+  O --> E["data/gold/*.parquet"]
   O -- "quality.py" --> V{"¿verificaciones<br/>en verde?"}
-  V -- sí --> E["data/gold/*.parquet"]
+  V -- no --> X["código de salida 1"]
 ```
 
 ## Decisiones

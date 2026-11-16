@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -66,6 +68,19 @@ class TestNotebookGenerator:
     def test_generated_file_notice(self) -> None:
         result = generator.generate("# x\n\nimport marimo\n")
         assert "GENERATED FILE" in result
+
+
+def test_generator_check_works_in_a_non_utf8_locale() -> None:
+    """The notebook has emoji; piping it to ruff must not depend on the Windows code page."""
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+    env.pop("PYTHONIOENCODING", None)
+    process = subprocess.run(
+        [sys.executable, str(generator.__file__), "--check"],
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr.decode("utf-8", errors="replace")
 
 
 class TestSyntheticSample:

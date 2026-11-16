@@ -120,3 +120,17 @@ def test_committed_sample_has_origin_label(repo_paths: Paths) -> None:
         "08",
         "76",
     }
+
+
+def test_prepare_pilot_refuses_to_overwrite_with_zero_rows(tmp_path: Path) -> None:
+    """A download without pilot rows must not replace the data or stamp it as INS."""
+    download = tmp_path / "Datos_2025_210.xlsx"
+    _microdata().write_excel(download)
+    output, origin = tmp_path / "pilot.csv", tmp_path / "ORIGEN.txt"
+    output.write_text("previous\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="pilot"):
+        prepare_pilot([download], output, origin, ["99"])
+
+    assert output.read_text(encoding="utf-8") == "previous\n"
+    assert not origin.exists()

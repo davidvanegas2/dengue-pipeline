@@ -112,7 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _use_utf8_output() -> None:
+    """Keep ✅, ⚠️ and table borders printable when stdout is not UTF-8.
+
+    On Windows a piped or redirected stdout, Git Bash and some IDE panels default to cp1252,
+    which made a successful run end in ``UnicodeEncodeError``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    _use_utf8_output()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,

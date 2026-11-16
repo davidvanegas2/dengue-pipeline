@@ -105,6 +105,11 @@ def prepare_pilot(
 ) -> int:
     """Write the filtered pilot CSV and origin record; return the number of rows."""
     pilot = filter_departments(read_microdata(downloaded_paths), department_codes)
+    if pilot.is_empty():
+        raise ValueError(
+            "No pilot cases found in the downloaded files; the current SIVIGILA file was kept. "
+            "Check that the files hold the pilot departments in cod_dpto_o."
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pilot.drop("filename").write_csv(output_path)
     names = ", ".join(sorted(r.name for r in downloaded_paths))

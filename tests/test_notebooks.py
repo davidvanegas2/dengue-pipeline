@@ -482,3 +482,94 @@ def test_student_notebook_has_no_solutions() -> None:
     ):
         assert answer in facilitator  # the check below is not vacuous
         assert answer not in student_any_quotes, answer
+
+
+def _student_with_edits(tmp_path: Path, todos: Sequence[str], edits: list[tuple[str, str]]) -> Path:
+    """Solve some TODOs, then apply extra edits (wrong answers, widget defaults)."""
+    path = student_with(tmp_path, *todos)
+    code = path.read_text(encoding="utf-8")
+    for original, new in edits:
+        assert original in code, original
+        code = code.replace(original, new)
+    path.write_text(code, encoding="utf-8")
+    return path
+
+
+def test_checkpoint_1_validates_both_bulletins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Week 27 survives .crop(), so selecting it must not hide the rows lost in week 26."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1"],
+        [('value="Semana 26 (28 jun – 4 jul 2026)"', 'value="Semana 27 (5 – 11 jul 2026)"')],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["bulletin_table"].height == 39  # the selected week reads fine
+    assert definitions["checkpoint_1"] is False
+    assert "bronze_bulletin" not in definitions
+
+
+@pytest.mark.parametrize(
+    "wrong_answer",
+    [
+        "fec_not AS notification_date,",  # still text: nothing was parsed
+        "split_part(fec_not, ' ', 1) AS notification_date,",  # date part, still text
+        "coalesce(try_cast(fec_not AS DATE), current_date) AS notification_date,",  # made up
+    ],
+)
+def test_checkpoint_2_requires_real_dates(
+    wrong_answer: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2"],
+        [("try_cast(fec_not AS DATE) AS notification_date,", wrong_answer)],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_2"] is False, status(definitions)
+
+
+def test_checkpoint_2_accepts_a_timestamp_solution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hint in the text (split_part + try_strptime, without CAST) is a valid answer."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2"],
+        [
+            (
+                "try_cast(fec_not AS DATE) AS notification_date,",
+                "try_strptime(split_part(fec_not, ' ', 1), '%d/%m/%Y') AS notification_date,",
+            )
+        ],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_2"] is True, status(definitions)
+
+
+@pytest.mark.parametrize(
+    "week_columns",
+    [
+        # One row per entity and year: unique keys, wrong grain.
+        "epi_year(observation_date) AS epi_year, 1 AS epi_week,",
+        # ISO weeks (Monday start) instead of epidemiological weeks.
+        "year(observation_date) AS epi_year, week(observation_date) AS epi_week,",
+    ],
+)
+def test_checkpoint_3_requires_epidemiological_weeks(
+    week_columns: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2", "todo3", "todo4_daily_mean"],
+        [
+            (
+                "epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,\n"
+                "               avg(precipitation_mm)",
+                f"{week_columns}\n               avg(precipitation_mm)",
+            )
+        ],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_3"] is False, status(definitions)
