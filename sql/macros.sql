@@ -45,9 +45,10 @@ CREATE OR REPLACE MACRO dane_code(value, width) AS (
 );
 
 -- Accept either a three-digit municipality suffix or a complete DIVIPOLA code.
+-- A complete code that lost its leading zero in Excel has four digits ('8001' -> '08001').
 CREATE OR REPLACE MACRO municipality_code(department, municipality) AS (
     CASE
-        WHEN length(clean_code(municipality)) = 5 THEN clean_code(municipality)
+        WHEN length(clean_code(municipality)) IN (4, 5) THEN dane_code(municipality, 5)
         ELSE dane_code(department, 2) || dane_code(municipality, 3)
     END
 );

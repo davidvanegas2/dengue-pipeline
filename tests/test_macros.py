@@ -38,3 +38,21 @@ def con(repo_paths: Paths) -> Iterator[duckdb.DuckDBPyConnection]:
 )
 def test_parse_date_text(con: duckdb.DuckDBPyConnection, text: str | None, expected: date) -> None:
     assert con.execute("SELECT parse_date_text(?)", [text]).fetchone() == (expected,)
+
+
+@pytest.mark.parametrize(
+    ("department", "municipality", "expected"),
+    [
+        ("76", "1", "76001"),  # three-digit suffix that lost its zeros
+        ("8", "1.0", "08001"),  # Excel float
+        ("76", "76001", "76001"),  # complete code
+        ("8", "8001", "08001"),  # complete code that lost its leading zero
+        ("8", "8001.0", "08001"),
+        ("08", "433", "08433"),
+    ],
+)
+def test_municipality_code(
+    con: duckdb.DuckDBPyConnection, department: str, municipality: str, expected: str
+) -> None:
+    row = con.execute("SELECT municipality_code(?, ?)", [department, municipality]).fetchone()
+    assert row == (expected,)
