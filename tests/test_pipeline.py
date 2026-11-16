@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import duckdb
 import polars as pl
@@ -10,7 +11,7 @@ import pytest
 
 from dengue_pipeline import quality, warehouse
 from dengue_pipeline.config import Paths
-from dengue_pipeline.pipeline import run_pipeline
+from dengue_pipeline.pipeline import export_gold, run_pipeline
 
 Warehouse = tuple[Paths, duckdb.DuckDBPyConnection]
 
@@ -152,6 +153,18 @@ def test_suspicious_days_are_flagged_not_removed(ready_warehouse: Warehouse) -> 
 def test_exports_gold(ready_warehouse: Warehouse) -> None:
     paths, con = ready_warehouse
     exported = pl.read_parquet(paths.gold / "weekly_dengue_signal.parquet")
+    assert exported.height == warehouse.count_rows(con, quality.GOLD_TABLE)
+
+
+def test_exports_gold_to_path_with_apostrophe_spaces_and_accents(
+    ready_warehouse: Warehouse, tmp_path: Path
+) -> None:
+    """Home folders such as ``C:\\Users\\María D'Costa`` must not break the export SQL."""
+    _, con = ready_warehouse
+    directory = tmp_path / "María D'Costa" / "gold dir"
+    outputs = export_gold(con, directory)
+    assert [p.name for p in outputs] == ["weekly_dengue_signal.parquet", "weekly_dengue_signal.csv"]
+    exported = pl.read_parquet(directory / "weekly_dengue_signal.parquet")
     assert exported.height == warehouse.count_rows(con, quality.GOLD_TABLE)
 
 
