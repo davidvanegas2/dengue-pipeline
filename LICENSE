@@ -24,4 +24,7 @@ SOFTWARE.
 
 The data files under data/ are public open data from Colombian government
 agencies (Instituto Nacional de Salud, IDEAM and DANE) and remain subject to
-their original terms. The SIVIGILA sample shipped by default is synthetic.
+their original terms; the MIT License above covers the code only. The SIVIGILA
+file under data/raw/sivigila/ is described by ORIGEN.txt in that folder (INS =
+microdata published by the Instituto Nacional de Salud, SINTETICO = synthetic
+sample).
