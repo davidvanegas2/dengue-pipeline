@@ -482,3 +482,29 @@ def test_student_notebook_has_no_solutions() -> None:
     ):
         assert answer in facilitator  # the check below is not vacuous
         assert answer not in student_any_quotes, answer
+
+
+def _student_with_edits(tmp_path: Path, todos: Sequence[str], edits: list[tuple[str, str]]) -> Path:
+    """Solve some TODOs, then apply extra edits (wrong answers, widget defaults)."""
+    path = student_with(tmp_path, *todos)
+    code = path.read_text(encoding="utf-8")
+    for original, new in edits:
+        assert original in code, original
+        code = code.replace(original, new)
+    path.write_text(code, encoding="utf-8")
+    return path
+
+
+def test_checkpoint_1_validates_both_bulletins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Week 27 survives .crop(), so selecting it must not hide the rows lost in week 26."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1"],
+        [('value="Semana 26 (28 jun – 4 jul 2026)"', 'value="Semana 27 (5 – 11 jul 2026)"')],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["bulletin_table"].height == 39  # the selected week reads fine
+    assert definitions["checkpoint_1"] is False
+    assert "bronze_bulletin" not in definitions

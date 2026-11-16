@@ -430,7 +430,7 @@ def _(read_rows, page, crop_table, title):
 
 
 @app.cell(hide_code=True)
-def _(discarded_lines, bulletin_table):
+def _(bulletin_table, bulletin_week, crop_table, find_table, path, read_rows):
     _ready = bulletin_table.height > 0 and bulletin_table["total_cases"].null_count() == 0
     if not _ready:
         checkpoint_1 = False
@@ -438,25 +438,62 @@ def _(discarded_lines, bulletin_table):
             mo.md("⏳ **Checkpoint 1:** completa primero el TODO 1."), kind="neutral"
         )
     else:
-        _is_total = pl.col("territorial_entity") == "Total"
-        _total = bulletin_table.filter(_is_total)["total_cases"].sum()
-        _total_sum = bulletin_table.filter(~_is_total)["total_cases"].sum()
-        checkpoint_1 = bool(_total) and _total == _total_sum
+        # Validate every bulletin against its own Total row, not only the selected one:
+        # both are loaded into the warehouse below, and one can read fine while the other
+        # loses rows.
+        _results = []
+        for _key in ("bulletin_26", "bulletin_27"):
+            _, _page, _title = find_table(path(_key))
+            _text = crop_table(_page, _title).extract_text()
+            _week = int(re.search(r"semana epidemiol[oó]gica (\d+) de \d{4}", _text).group(1))
+            _rows, _discarded = read_rows(_text)
+            _total = sum(_r["total_cases"] for _r in _rows if _r["territorial_entity"] == "Total")
+            _total_sum = sum(
+                _r["total_cases"] for _r in _rows if _r["territorial_entity"] != "Total"
+            )
+            _results.append(
+                {
+                    "key": _key,
+                    "week": _week,
+                    "entities": sum(_r["territorial_entity"] != "Total" for _r in _rows),
+                    "total": _total,
+                    "sum": _total_sum,
+                    "broken": [_l for _l in _discarded if re.search(r"\d+,\d", _l)],
+                }
+            )
+        # Show the selected bulletin first when more than one fails.
+        _failed = sorted(
+            (_r for _r in _results if not _r["total"] or _r["total"] != _r["sum"]),
+            key=lambda _r: _r["key"] != bulletin_week.value,
+        )
+        checkpoint_1 = not _failed
         if checkpoint_1:
+            _detail = " y ".join(
+                f"las {_r['entities']} entidades de la semana {_r['week']} suman **{_r['sum']:,}**"
+                for _r in _results
+            )
             _output = mo.callout(
                 mo.md(
-                    f"✅ **Checkpoint 1:** las {bulletin_table.height - 1} entidades suman "
-                    f"**{_total_sum:,}** casos, igual que la fila *Total* del boletín. "
-                    "Validar contra el propio documento es la mejor prueba que existe."
+                    f"✅ **Checkpoint 1:** {_detail} casos, igual que la fila *Total* de cada "
+                    "boletín. Validar contra el propio documento es la mejor prueba que existe."
                 ),
                 kind="success",
             )
         else:
-            _broken = "\n".join(_l for _l in discarded_lines if re.search(r"\d+,\d", _l))
+            _r = _failed[0]
+            _broken = "\n".join(_r["broken"])
+            _other = (
+                ""
+                if _r["key"] == bulletin_week.value
+                else "El boletín que tienes seleccionado cuadra, pero la bodega carga los "
+                "dos y este otro no.\n\n"
+            )
             _output = mo.callout(
                 mo.md(
-                    f"❌ **Checkpoint 1:** las entidades suman **{_total_sum:,}**, pero el "
-                    f"boletín dice **{_total:,}**. Faltan **{_total - _total_sum:,} casos**.\n\n"
+                    f"❌ **Checkpoint 1 (boletín de la semana {_r['week']}):** las entidades "
+                    f"suman **{_r['sum']:,}**, pero el boletín dice **{_r['total']:,}**. "
+                    f"Faltan **{_r['total'] - _r['sum']:,} casos**.\n\n"
+                    f"{_other}"
                     f"Estas líneas tienen números pero no se pudieron leer:\n\n```\n{_broken}\n```\n\n"
                     "✏️ **TODO 2:** mira el final de cada línea. ¿De dónde salió esa "
                     "letra? Arregla `crop_table` (abre la ayuda de abajo si te atascas)."
