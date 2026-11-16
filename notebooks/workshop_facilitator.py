@@ -675,7 +675,12 @@ def _(checkpoint_2, con, path):
         -- excluding discarded cases (6) and data-entry errors (D). The real INS downloads
         -- contain neither (adjustment is 0, 3, 5 or 7); keep the filter as a safeguard.
         CREATE OR REPLACE TABLE silver.weekly_cases AS
-        SELECT me.territorial_entity, c.epi_year, c.epi_week, count(*) AS cases
+        SELECT
+            me.territorial_entity,
+            c.epi_year,
+            c.epi_week,
+            count(*) AS cases,
+            count(*) FILTER (WHERE c.event_code = '220') AS severe_cases
         FROM silver.cases AS c
         JOIN silver.municipality_entity AS me ON c.municipality_code = me.municipality_code
         WHERE c.event_code IN ('210', '220') AND c.adjustment NOT IN ('6', 'D')
@@ -816,11 +821,14 @@ def _(con, macros_ready, use_aliases):
                    normalize(departamento) AS department,
                    normalize(municipio) AS municipality,
                    CAST(fecha[:10] AS DATE) AS observation_date,
-                   CAST(precipitacion_mm AS DOUBLE) AS precipitation_mm,
+                   CAST(precipitacion_mm AS DECIMAL(14, 4)) AS precipitation_mm,
                    CAST(n_lecturas AS INTEGER) AS reading_count
             FROM bronze.ideam
         )
-        SELECT b.*, d.cod_mpio AS municipality_code
+        SELECT
+            b.*,
+            d.cod_mpio AS municipality_code,
+            (b.reading_count > 144 OR b.precipitation_mm > 300) AS suspicious_reading
         FROM base AS b
         LEFT JOIN bronze.alias AS a
             ON {_use_aliases}
@@ -973,7 +981,8 @@ def _(con, entity_rainfall_ready):
         )
         -- ...then average the stations within each territorial entity.
         SELECT territorial_entity, epi_year, epi_week,
-               round(avg(mm), 1) AS rainfall_mm, count(*) AS stations
+               round(avg(mm), 2) AS mean_precipitation_mm,
+               count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
         -- <<< SOLUTION
@@ -981,8 +990,8 @@ def _(con, entity_rainfall_ready):
         -- -- ✏️ TODO 4: this returns one row per DAY and station. Aggregate by week.
         -- SELECT territorial_entity,
         --        epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,
-        --        precipitation_mm AS rainfall_mm,
-        --        1 AS stations
+        --        precipitation_mm AS mean_precipitation_mm,
+        --        1 AS stations_with_data
         -- FROM silver.entity_daily_rainfall
         -- <<< STUDENT
         """
@@ -996,15 +1005,16 @@ def _():
     mo.accordion(
         {
             "💡 Ayuda para el TODO 4": mo.md(
-                "Usa una función de agregación (`sum`, `avg`) sobre `precipitation_mm` y "
-                "`GROUP BY` las columnas de la llave. Una versión válida:\n\n"
-                "```sql\nSELECT territorial_entity, epi_year(observation_date) AS epi_year,\n"
-                "       epi_week(observation_date) AS epi_week,\n"
-                "       avg(precipitation_mm) AS rainfall_mm,\n"
-                "       count(DISTINCT station_code) AS stations\n"
-                "FROM silver.entity_daily_rainfall\nGROUP BY ALL\n```\n\n"
-                "¿Es lo mismo promediar días que sumar la semana por estación y luego "
-                "promediar estaciones? Discútanlo."
+                "Agrupa (`GROUP BY`) por las columnas de la llave: `territorial_entity`, "
+                "`epi_year` y `epi_week`. Las demás columnas necesitan una función de "
+                "agregación (`sum`, `avg`, `count`…). Antes de escribirla, piénsenlo en "
+                "pareja:\n\n"
+                "* `mean_precipitation_mm` es la lluvia **de la semana**, en mm. ¿Sale de "
+                "sumar o de promediar los días? ¿Y qué haces si la entidad tiene varias "
+                "estaciones?\n"
+                "* `stations_with_data` cuenta **estaciones**, no días: cada estación "
+                "aparece una vez por cada día con dato.\n\n"
+                "La definición exacta de cada columna está en `docs/diccionario_de_datos.md`."
             )
         }
     )
@@ -1028,18 +1038,45 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
         ),
         -- The spine includes every entity-week combination, with or without data.
         spine AS (
-            SELECT e.entidad_territorial AS territorial_entity, s.epi_year, s.epi_week
+            SELECT
+                e.entidad_territorial AS territorial_entity,
+                e.tipo AS entity_type,
+                lpad(e.cod_dpto, 2, '0') AS department_code,
+                s.epi_year,
+                s.epi_week
             FROM bronze.entities AS e CROSS JOIN weeks AS s
+        ),
+        suspicious AS (
+            SELECT
+                territorial_entity,
+                epi_year(observation_date) AS epi_year,
+                epi_week(observation_date) AS epi_week,
+                CAST(count(*) FILTER (WHERE suspicious_reading) AS INTEGER) AS suspicious_days
+            FROM silver.entity_daily_rainfall
+            GROUP BY ALL
         )
         SELECT
-            es.territorial_entity, es.epi_year, es.epi_week,
+            es.territorial_entity,
+            es.entity_type,
+            es.department_code,
+            es.epi_year,
+            es.epi_week,
             make_date(es.epi_year, 1, 4) - CAST(dayofweek(make_date(es.epi_year, 1, 4)) AS INTEGER)
                 + CAST(7 * (es.epi_week - 1) AS INTEGER) AS week_start,
+            b.total_cases AS bulletin_cumulative_cases,
+            -- Gold fixes the column types, whatever aggregation TODO 4 used
+            -- (sum() over DECIMAL stays DECIMAL, which charts cannot serialize).
+            CAST(l.mean_precipitation_mm AS DOUBLE) AS mean_precipitation_mm,
+            CAST(l.stations_with_data AS BIGINT) AS stations_with_data,
+            sp.suspicious_days,
             CASE WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN coalesce(c.cases, 0) END
                 AS sivigila_cases,
-            b.total_cases AS bulletin_cumulative_cases,
-            l.rainfall_mm,
-            l.stations
+            CASE WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN coalesce(c.severe_cases, 0) END
+                AS sivigila_severe_cases,
+            CASE
+                WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN 'sivigila'
+                WHEN b.total_cases IS NOT NULL THEN 'bulletin'
+            END AS case_source
         FROM spine AS es
         LEFT JOIN silver.weekly_cases AS c
             ON es.territorial_entity = c.territorial_entity
@@ -1047,10 +1084,13 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
         LEFT JOIN silver.weekly_rainfall AS l
             ON es.territorial_entity = l.territorial_entity
             AND es.epi_year = l.epi_year AND es.epi_week = l.epi_week
+        LEFT JOIN suspicious AS sp
+            ON es.territorial_entity = sp.territorial_entity
+            AND es.epi_year = sp.epi_year AND es.epi_week = sp.epi_week
         LEFT JOIN bronze.bulletin AS b
             ON es.territorial_entity = b.territorial_entity
             AND es.epi_year = b.epi_year AND es.epi_week = b.epi_week
-        ORDER BY ALL
+        ORDER BY es.territorial_entity, es.epi_year, es.epi_week
         """
     )
     gold = con.sql("SELECT * FROM gold.signal").pl()
@@ -1079,23 +1119,80 @@ def _(gold):
 
 
 @app.cell
-def _(checkpoint_3, gold, final_gold):
+def _(checkpoint_3, final_gold, gold, missing_municipalities):
     mo.stop(not checkpoint_3)
-    _mine = gold.group_by("territorial_entity").agg(student_cases=pl.col("sivigila_cases").sum())
-    _repo = final_gold.group_by("territorial_entity").agg(repo_cases=pl.col("sivigila_cases").sum())
+    _mine = gold.group_by("territorial_entity").agg(
+        student_cases=pl.col("sivigila_cases").sum(),
+        student_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        student_stations=pl.col("stations_with_data").max(),
+    )
+    _repo = final_gold.group_by("territorial_entity").agg(
+        repo_cases=pl.col("sivigila_cases").sum(),
+        repo_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        repo_stations=pl.col("stations_with_data").max(),
+    )
     # A full join keeps entities that are missing from either table, so they count as differences.
     _comparison = _mine.join(_repo, on="territorial_entity", how="full", coalesce=True).sort(
         "territorial_entity"
     )
-    cases_match = bool(_comparison["student_cases"].eq_missing(_comparison["repo_cases"]).all())
+    # Compare each pair of columns; eq_missing treats null as equal only to null.
+    _pairs = {
+        "cases": ("student_cases", "repo_cases"),
+        "stations": ("student_stations", "repo_stations"),
+        "rainfall": ("student_rain_mm", "repo_rain_mm"),
+    }
+    gold_mismatches = [
+        _name
+        for _name, (_student, _reference) in _pairs.items()
+        if not _comparison[_student].eq_missing(_comparison[_reference]).all()
+    ]
+    gold_matches_repo = not gold_mismatches
+    cases_match = "cases" not in gold_mismatches
+    _hints = {
+        "cases": "**Casos:** `student_cases` no coincide con `repo_cases`. Los TODOs no "
+        "cambian los casos: ¿estás usando otro archivo de SIVIGILA, como la muestra sintética?",
+        "stations": "**Estaciones:** `student_stations` no coincide con `repo_stations`. "
+        "¿Contaste estaciones distintas o filas (una por estación y día)?",
+        "rainfall": "**Lluvia:** `student_rain_mm` no coincide con `repo_rain_mm`. El "
+        "repositorio suma la lluvia de la semana en cada estación y luego promedia las "
+        "estaciones de la entidad (mm por semana). ¿Qué calculaste tú?",
+    }
+    if gold_matches_repo:
+        _feedback = mo.callout(
+            mo.md(
+                "✅ **¿Coincide con la tabla del inicio? Sí:** casos, estaciones y lluvia "
+                "coinciden."
+            ),
+            kind="success",
+        )
+    elif not missing_municipalities.is_empty():
+        _unmatched = ", ".join(
+            f"`{_name}`"
+            for _name in missing_municipalities["municipality"].unique(maintain_order=True)
+        )
+        _feedback = mo.callout(
+            mo.md(
+                "⚠️ **¿Coincide con la tabla del inicio? Todavía no:** hay estaciones del IDEAM "
+                f"sin municipio ({_unmatched}), así que su lluvia no llega a la tabla oro. "
+                "Vuelve a la **sección 5** y activa el interruptor **Usar la tabla de alias "
+                "(CALI → SANTIAGO DE CALI)**."
+            ),
+            kind="warn",
+        )
+    else:
+        _feedback = mo.callout(
+            mo.md(
+                "💡 **¿Coincide con la tabla del inicio? Casi:** tu tabla tiene el grano "
+                "correcto, pero algunas columnas no coinciden con las del repositorio:\n\n"
+                + "\n".join(f"* {_hints[_name]}" for _name in gold_mismatches)
+            ),
+            kind="info",
+        )
     _buffer = io.BytesIO()
     gold.write_parquet(_buffer)
     mo.vstack(
         [
-            mo.md(
-                "**¿Coinciden los conteos de casos con la tabla del inicio?** "
-                + ("Sí ✅" if cases_match else "No del todo 🤔")
-            ),
+            _feedback,
             _comparison,
             mo.download(
                 data=_buffer.getvalue(),
@@ -1104,7 +1201,7 @@ def _(checkpoint_3, gold, final_gold):
             ),
         ]
     )
-    return (cases_match,)
+    return cases_match, gold_matches_repo, gold_mismatches
 
 
 @app.cell(hide_code=True)
@@ -1113,9 +1210,9 @@ def _(final_gold, ml_export):
         [
             mo.md(
                 "**Para el taller de ML, usa la tabla oficial** (es la misma del botón de "
-                "la sección 1). La tabla del ejercicio tiene menos columnas y su lluvia "
-                f"depende de tu solución al TODO 4. La oficial conserva las {final_gold.width} "
-                "columnas del diccionario de datos y suma la lluvia semanal por estación "
+                "la sección 1). La lluvia de la tabla del ejercicio depende de tu "
+                f"solución al TODO 4. La oficial conserva las {final_gold.width} columnas del "
+                "diccionario de datos y suma la lluvia semanal por estación "
                 "antes de promediar estaciones."
             ),
             mo.download(
@@ -1210,7 +1307,8 @@ def _(con, missing_municipalities):
     mo.stop(missing_municipalities is None)
     _unusual = con.sql(
         """
-        SELECT observation_date, department, municipality, station_code, precipitation_mm, reading_count
+        SELECT observation_date, department, municipality, station_code,
+               CAST(precipitation_mm AS DOUBLE) AS precipitation_mm, reading_count
         FROM silver.daily_rainfall
         ORDER BY precipitation_mm DESC LIMIT 6
         """
@@ -1235,20 +1333,43 @@ def _():
 
 
 @app.cell
-def _(checkpoint_3, gold, lag):
+def _(checkpoint_3, gold, lag, missing_municipalities):
     mo.stop(not checkpoint_3)
     _with_lag = (
         gold.sort("territorial_entity", "epi_year", "epi_week")
         .with_columns(
-            earlier_rainfall=pl.col("rainfall_mm").shift(lag.value).over("territorial_entity")
+            earlier_rainfall=pl.col("mean_precipitation_mm")
+            .shift(lag.value)
+            .over("territorial_entity")
         )
         .filter(pl.col("sivigila_cases").is_not_null())
     )
     _correlation = (
         _with_lag.group_by("territorial_entity")
-        .agg(correlation=pl.corr("earlier_rainfall", "sivigila_cases").round(2))
+        # An entity without rainfall gives NaN; show it as null.
+        .agg(correlation=pl.corr("earlier_rainfall", "sivigila_cases").fill_nan(None).round(2))
         .sort("territorial_entity")
     )
+    _without_rain = (
+        gold.group_by("territorial_entity")
+        .agg(has_rain=pl.col("mean_precipitation_mm").is_not_null().any())
+        .filter(~pl.col("has_rain"))
+        .sort("territorial_entity")["territorial_entity"]
+        .to_list()
+    )
+    _notes = []
+    if _without_rain and not missing_municipalities.is_empty():
+        _verb = "no tiene" if len(_without_rain) == 1 else "no tienen"
+        _notes.append(
+            mo.callout(
+                mo.md(
+                    f"💡 **{', '.join(_without_rain)}** {_verb} lluvia, así que su correlación "
+                    "queda en `null`: hay estaciones del IDEAM sin municipio. Activa el "
+                    "interruptor de alias en la **sección 5** para calcularla."
+                ),
+                kind="warn",
+            )
+        )
     mo.vstack(
         [
             mo.md(
@@ -1257,6 +1378,7 @@ def _(checkpoint_3, gold, lag):
                 f"semanas de diferencia se parecen más la lluvia y los casos? *(Rezago = "
                 f"{lag.value} semanas.)* Esta pregunta es el puente al taller de ML."
             ),
+            *_notes,
             lag,
             _correlation,
         ]

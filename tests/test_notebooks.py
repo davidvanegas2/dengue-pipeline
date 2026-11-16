@@ -35,6 +35,12 @@ GOLD = ROOT / "data" / "gold" / "weekly_dengue_signal.parquet"
 REPO_URL_LINE = 'REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"'
 OFFICIAL_DOWNLOAD = "Descargar tabla oficial para ML"
 
+TODO4_STUB = (
+    "precipitation_mm AS mean_precipitation_mm,\n"
+    "               1 AS stations_with_data\n"
+    "        FROM silver.entity_daily_rainfall"
+)
+
 # Student solutions for each TODO (exact replacements in workshop.py).
 SOLUTIONS: dict[str, list[tuple[str, str]]] = {
     "todo1": [
@@ -56,18 +62,53 @@ SOLUTIONS: dict[str, list[tuple[str, str]]] = {
             "try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)) AS notification_date,",
         )
     ],
+    # Same result as the repository: weekly total per station, averaged over stations.
     "todo4": [
         (
-            "precipitation_mm AS rainfall_mm,\n"
-            "               1 AS stations\n"
-            "        FROM silver.entity_daily_rainfall",
-            "avg(precipitation_mm) AS rainfall_mm,\n"
-            "               count(DISTINCT station_code) AS stations\n"
+            "SELECT territorial_entity,\n"
+            "               epi_year(observation_date) AS epi_year, "
+            "epi_week(observation_date) AS epi_week,\n"
+            "               " + TODO4_STUB,
+            "WITH per_station AS (\n"
+            "            SELECT territorial_entity, station_code,\n"
+            "                   epi_year(observation_date) AS epi_year,\n"
+            "                   epi_week(observation_date) AS epi_week,\n"
+            "                   sum(precipitation_mm) AS mm\n"
+            "            FROM silver.entity_daily_rainfall\n"
+            "            GROUP BY ALL\n"
+            "        )\n"
+            "        SELECT territorial_entity, epi_year, epi_week,\n"
+            "               round(avg(mm), 2) AS mean_precipitation_mm,\n"
+            "               count(*) AS stations_with_data\n"
+            "        FROM per_station\n"
+            "        GROUP BY ALL",
+        )
+    ],
+    # Right grain, different quantity: the mean daily rainfall (mm/day).
+    "todo4_daily_mean": [
+        (
+            TODO4_STUB,
+            "avg(precipitation_mm) AS mean_precipitation_mm,\n"
+            "               count(DISTINCT station_code) AS stations_with_data\n"
             "        FROM silver.entity_daily_rainfall\n"
             "        GROUP BY ALL",
         )
     ],
+    # Right grain, but summing every station (DECIMAL in DuckDB) and counting station-days.
+    "todo4_sum": [
+        (
+            TODO4_STUB,
+            "sum(precipitation_mm) AS mean_precipitation_mm,\n"
+            "               count(*) AS stations_with_data\n"
+            "        FROM silver.entity_daily_rainfall\n"
+            "        GROUP BY ALL",
+        )
+    ],
+    # Not a TODO: turn on the municipality-alias switch in section 5.
+    "aliases": [('mo.ui.switch(label="Usar', 'mo.ui.switch(value=True, label="Usar')],
 }
+
+TODOS = ("todo1", "todo2", "todo3", "todo4")
 
 
 def run_app(
@@ -103,6 +144,12 @@ def assert_ml_contract(export: bytes) -> None:
     assert table.select("territorial_entity", "epi_year", "epi_week").n_unique() == 750
 
 
+def lag_section(outputs: Sequence[Any]) -> str:
+    """Return the rendered output of the rainfall-lag cell (Incógnita 4)."""
+    (section,) = html_outputs(outputs, "Incógnita 4")
+    return section
+
+
 def student_with(tmp_path: Path, *todos: str) -> Path:
     code = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
     for todo in todos:
@@ -126,14 +173,20 @@ def notebook_paths(tmp_paths: Paths) -> Paths:
 
 
 def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
-    definitions = run_notebook(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
+    rendered, definitions = run_app(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].height == 750
     assert definitions["cases_match"] is True
     assert_ml_contract(definitions["ml_export"])
+    assert definitions["gold"].schema == definitions["final_gold"].schema
     assert (
         definitions["missing_municipalities"].height == 2
     )  # CALI and BUGA, until aliases are enabled
+    # Without aliases, Cali and the Buga station have no rainfall.
+    assert definitions["gold_matches_repo"] is False
+    assert definitions["gold_mismatches"] == ["stations", "rainfall"]
+    # Cali has no rainfall to correlate; the lag section says how to fix it.
+    assert "interruptor de alias" in lag_section(rendered)
 
 
 @pytest.mark.parametrize("variant", ["facilitator", "student"])
@@ -144,13 +197,14 @@ def test_solved_notebooks_support_synthetic_dates(
     notebook = (
         ROOT / "notebooks" / "workshop_facilitator.py"
         if variant == "facilitator"
-        else student_with(tmp_path, "todo1", "todo2", "todo3", "todo4")
+        else student_with(tmp_path, *TODOS)
     )
     definitions = run_notebook(notebook, monkeypatch, data_root=notebook_paths.root)
     assert definitions["SIVIGILA_ORIGIN"] == "SINTETICO"
     assert definitions["cases_by_department"]["with_valid_date"].sum() == rows
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].height == 750
+    assert "cases" in definitions["gold_mismatches"]  # the snapshot uses INS cases
 
 
 @pytest.mark.parametrize(
@@ -227,7 +281,7 @@ def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     progress = [
         (("todo1", "todo2"), {"checkpoint_1": True, "checkpoint_2": False}),
         (("todo1", "todo2", "todo3"), {"checkpoint_2": True, "checkpoint_3": False}),
-        (("todo1", "todo2", "todo3", "todo4"), {"checkpoint_3": True}),
+        (TODOS, {"checkpoint_3": True}),
     ]
     for todos, expected in progress:
         definitions = run_notebook(student_with(tmp_path, *todos), monkeypatch)
@@ -364,9 +418,40 @@ def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.M
             ('mo.ui.switch(label="Usar', 'mo.ui.switch(value=True, label="Usar'),
         ],
     )
-    definitions = run_notebook(path, monkeypatch)
+    rendered, definitions = run_app(path, monkeypatch)
     assert definitions["missing_municipalities"].is_empty()  # aliases allow Cali to match
     assert definitions["checkpoint_3"] is True
+    assert definitions["gold_matches_repo"] is True
+    assert definitions["gold_mismatches"] == []
+    assert "interruptor de alias" not in lag_section(rendered)  # every entity has rainfall
+
+
+def test_student_solution_matches_repository_gold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    definitions = run_notebook(student_with(tmp_path, *TODOS, "aliases"), monkeypatch)
+    assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
+    assert definitions["gold"].schema == definitions["final_gold"].schema
+    assert definitions["gold_mismatches"] == []
+    assert definitions["gold_matches_repo"] is True
+
+
+@pytest.mark.parametrize(
+    ("todo4", "mismatches"),
+    [("todo4_daily_mean", ["rainfall"]), ("todo4_sum", ["stations", "rainfall"])],
+)
+def test_other_todo4_answers_report_what_differs(
+    todo4: str, mismatches: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A different aggregation keeps the grain but must say which columns differ."""
+    path = student_with(tmp_path, "todo1", "todo2", "todo3", todo4, "aliases")
+    rendered, definitions = run_app(path, monkeypatch)
+    assert definitions["checkpoint_3"] is True
+    # sum() over DECIMAL stays DECIMAL; gold casts it so the charts and the parquet work.
+    assert definitions["gold"].schema == definitions["final_gold"].schema
+    assert definitions["gold_mismatches"] == mismatches
+    assert definitions["gold_matches_repo"] is False
+    assert html_outputs(rendered, "Incógnita 2")  # the chart cell ran
 
 
 @pytest.mark.network
@@ -381,10 +466,19 @@ def test_student_notebook_is_current() -> None:
 
 
 def test_student_notebook_has_no_solutions() -> None:
+    """Help accordions give hints, never an answer students can paste."""
     student = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
     assert "SOLUTION" not in student
     assert "STUDENT" not in student
+    # The TODO 2 help names within_bbox on purpose; nothing before it may.
     assert "within_bbox" not in student.split("💡 Ayuda para el TODO 2")[0]
     facilitator = (ROOT / "notebooks" / "workshop_facilitator.py").read_text(encoding="utf-8")
-    assert "try_strptime(split_part(" in facilitator  # the check below is not vacuous
-    assert "try_strptime(split_part(" not in student
+    student_any_quotes = student.replace("'", '"')
+    for answer in (
+        'text.replace(",", ".")',  # TODO 1
+        "try_strptime(split_part(",  # TODO 3
+        "sum(precipitation_mm)",  # TODO 4
+        "count(DISTINCT station_code) AS stations_with_data",  # TODO 4
+    ):
+        assert answer in facilitator  # the check below is not vacuous
+        assert answer not in student_any_quotes, answer
