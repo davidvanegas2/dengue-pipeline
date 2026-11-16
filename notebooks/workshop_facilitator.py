@@ -1164,22 +1164,50 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
 
 
 @app.cell(hide_code=True)
-def _(gold):
+def _(con, gold):
     _keys = ["territorial_entity", "epi_year", "epi_week"]
     _duplicates = gold.height - gold.select(_keys).n_unique()
     _weeks = gold.select("epi_year", "epi_week").n_unique()
     _entities = gold["territorial_entity"].n_unique()
-    checkpoint_3 = _duplicates == 0 and gold.height == _weeks * _entities
-    mo.callout(
-        mo.md(
+    # Unique keys are not enough: the gold spine is always complete, so a rainfall table
+    # with the wrong weeks would simply not join. Compare its keys with the epidemiological
+    # weeks that actually have rainfall data.
+    _extra, _missing = con.sql(
+        """
+        WITH expected AS (
+            SELECT DISTINCT territorial_entity,
+                   epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week
+            FROM silver.entity_daily_rainfall
+        ),
+        actual AS (
+            SELECT DISTINCT territorial_entity, epi_year, epi_week FROM silver.weekly_rainfall
+        )
+        SELECT
+            (SELECT count(*) FROM (SELECT * FROM actual EXCEPT SELECT * FROM expected)),
+            (SELECT count(*) FROM (SELECT * FROM expected EXCEPT SELECT * FROM actual))
+        """
+    ).fetchall()[0]
+    _right_weeks = _extra == 0 and _missing == 0
+    checkpoint_3 = _duplicates == 0 and gold.height == _weeks * _entities and _right_weeks
+    if checkpoint_3:
+        _message = (
             f"✅ **Checkpoint 3:** {gold.height:,} filas = {_entities} entidades × "
             f"{_weeks} semanas, sin llaves repetidas. **¡Tienes tu tabla oro!** 🥇"
-            if checkpoint_3
-            else f"❌ **Checkpoint 3:** hay **{_duplicates:,} filas repetidas** "
+        )
+    elif _duplicates:
+        _message = (
+            f"❌ **Checkpoint 3:** hay **{_duplicates:,} filas repetidas** "
             "(misma entidad y semana). ¿Agrupaste la lluvia por semana en el TODO 4?"
-        ),
-        kind="success" if checkpoint_3 else "danger",
-    )
+        )
+    else:
+        _message = (
+            "❌ **Checkpoint 3:** tu tabla de lluvia no tiene filas repetidas, pero sus "
+            "semanas no son las semanas epidemiológicas de los datos: "
+            f"**faltan {_missing:,}** combinaciones de entidad y semana y **sobran {_extra:,}**. "
+            "En el TODO 4 conserva `epi_year(observation_date)` y `epi_week(observation_date)` "
+            "(no uses `week()`: las semanas ISO empiezan en lunes)."
+        )
+    mo.callout(mo.md(_message), kind="success" if checkpoint_3 else "danger")
     return (checkpoint_3,)
 
 

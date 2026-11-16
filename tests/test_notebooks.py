@@ -546,3 +546,30 @@ def test_checkpoint_2_accepts_a_timestamp_solution(
     )
     definitions = run_notebook(notebook, monkeypatch)
     assert definitions["checkpoint_2"] is True, status(definitions)
+
+
+@pytest.mark.parametrize(
+    "week_columns",
+    [
+        # One row per entity and year: unique keys, wrong grain.
+        "epi_year(observation_date) AS epi_year, 1 AS epi_week,",
+        # ISO weeks (Monday start) instead of epidemiological weeks.
+        "year(observation_date) AS epi_year, week(observation_date) AS epi_week,",
+    ],
+)
+def test_checkpoint_3_requires_epidemiological_weeks(
+    week_columns: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2", "todo3", "todo4_daily_mean"],
+        [
+            (
+                "epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,\n"
+                "               avg(precipitation_mm)",
+                f"{week_columns}\n               avg(precipitation_mm)",
+            )
+        ],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_3"] is False, status(definitions)
