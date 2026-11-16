@@ -35,15 +35,14 @@ GOLD = ROOT / "data" / "gold" / "weekly_dengue_signal.parquet"
 REPO_URL_LINE = 'REPO_URL = "https://raw.githubusercontent.com/davidvanegas2/dengue-pipeline/main"'
 OFFICIAL_DOWNLOAD = "Descargar tabla oficial para ML"
 DATE_EXPRESSION = """coalesce(
-                CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
-                try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
-            ) AS notification_date,"""
+                    CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
+                    try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
+                ) AS notification_date,"""
+TODO1_STUB = '    notification_date_format = "%Y-%m-%d"'
 
 # Only these two edits are required; the remaining SQL is a runnable scaffold.
 SOLUTIONS: dict[str, list[tuple[str, str]]] = {
-    "todo1": [
-        ('    notification_date_format = "%Y-%m-%d"', '    notification_date_format = "%d/%m/%Y"')
-    ],
+    "todo1": [(TODO1_STUB, '    notification_date_format = "%d/%m/%Y"')],
     "todo2": [
         (
             "round(sum(mm), 2) AS mean_precipitation_mm,",
@@ -91,6 +90,15 @@ def lag_section(outputs: Sequence[Any]) -> str:
     """Return the rendered output of the rainfall-lag cell (Incógnita 4)."""
     (section,) = html_outputs(outputs, "Incógnita 4")
     return section
+
+
+def summary_marks(outputs: Sequence[Any]) -> dict[str, str]:
+    """Return the ✅/⏳ mark of each exercise in the section 8 summary (rendered once)."""
+    (section,) = html_outputs(outputs, "8 · Resumen")
+    return {
+        todo: next(mark for mark in "✅⏳" if f"{mark} {todo} ·" in section)
+        for todo in ("TODO 1", "TODO 2")
+    }
 
 
 def student_with(tmp_path: Path, *todos: str) -> Path:
@@ -206,6 +214,30 @@ def test_initial_student_notebook_waits_for_todos(
     by_department = definitions["cases_by_department"]
     assert by_department["matched_pct"].to_list() == [100.0] * by_department.height
     assert by_department["date_pct"].to_list() == [0.0] * by_department.height
+    # The progress summary is visible from the start, not only after TODO 1.
+    assert summary_marks(outputs) == {"TODO 1": "⏳", "TODO 2": "⏳"}
+
+
+@pytest.mark.parametrize(
+    ("date_format", "message"),
+    [
+        # %M is minutes: every date parses, in the right year, but always in January.
+        ("%d/%M/%Y", "no cuadran con la semana del caso"),
+        # An unknown format code raises in DuckDB instead of returning NULL.
+        ("%D/%M/%Y", "DuckDB no reconoce el formato"),
+    ],
+)
+def test_checkpoint_2_rejects_wrong_date_formats(
+    date_format: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path, [], [(TODO1_STUB, f'    notification_date_format = "{date_format}"')]
+    )
+    outputs, definitions = run_app(notebook, monkeypatch)
+    assert definitions["checkpoint_2"] is False
+    assert "checkpoint_3" not in definitions
+    assert html_outputs(outputs, message)
+    assert summary_marks(outputs) == {"TODO 1": "⏳", "TODO 2": "⏳"}
 
 
 @pytest.mark.parametrize(
@@ -251,6 +283,8 @@ def test_full_progression(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert html_outputs(outputs, "Estructura correcta")
         marker = "TODO 2 completo" if expected["aggregation_ok"] else "TODO 2 pendiente"
         assert html_outputs(outputs, marker)
+        todo2_mark = "✅" if expected["aggregation_ok"] else "⏳"
+        assert summary_marks(outputs) == {"TODO 1": "✅", "TODO 2": todo2_mark}
 
 
 def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -> Path:
@@ -439,6 +473,17 @@ def test_aggregation_checks_each_week_even_when_entity_averages_match(
     assert definitions["checkpoint_3"] is True
     assert definitions["gold_mismatches"] == ["rainfall"]
     assert definitions["aggregation_ok"] is False
+    # The detail shows the two weeks that differ, not entity summaries that hide them.
+    differences = definitions["gold_differences"]
+    assert differences.height == 2
+    assert set(differences["territorial_entity"]) == {"Atlántico"}
+    assert differences.columns == [
+        "territorial_entity",
+        "epi_year",
+        "epi_week",
+        "student_mean_precipitation_mm",
+        "repo_mean_precipitation_mm",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -481,7 +526,11 @@ def test_alias_demonstration_explains_missing_rainfall(
     assert definitions["gold_mismatches"] == ["stations", "rainfall"]
     assert definitions["aggregation_ok"] is False
     assert "interruptor de alias" in lag_section(outputs)
+    # The aggregation is the solved one: the status must blame the switch, not the calculation.
+    assert html_outputs(outputs, "antes de revisar tu cálculo")
     assert html_outputs(outputs, "activa el interruptor")
+    assert not html_outputs(outputs, "revisa el cálculo y el detalle")
+    assert not html_outputs(outputs, "Revisa estas columnas")
 
 
 @pytest.mark.network
@@ -603,5 +652,7 @@ def test_checkpoint_3_requires_epidemiological_weeks(
             )
         ],
     )
-    definitions = run_notebook(notebook, monkeypatch)
+    outputs, definitions = run_app(notebook, monkeypatch)
     assert definitions["checkpoint_3"] is False, status(definitions)
+    # The summary stays visible and keeps TODO 2 pending while the structure is wrong.
+    assert summary_marks(outputs) == {"TODO 1": "✅", "TODO 2": "⏳"}

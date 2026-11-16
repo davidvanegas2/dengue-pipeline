@@ -146,7 +146,10 @@ están completos y la tabla del ejercicio coincide con la oficial en las métric
    la semana 26: `crop` pierde 733 casos y `within_bbox` conserva el total. La carga
    utiliza el método correcto sin exigir una edición.
 3. En el TODO 1, cambia solo `notification_date_format` a `"%d/%m/%Y"`. Comprueba que
-   todas las fechas se convierten y que el siguiente bloque se habilita.
+   todas las fechas se convierten y que el siguiente bloque se habilita. Prueba también
+   `"%d/%M/%Y"` (`%M` son minutos: todas las fechas caen en enero) y `"%D/%m/%Y"` (código
+   desconocido): ambos deben dejar el TODO 1 pendiente con una pista en español, sin error
+   de DuckDB.
 4. Desactiva los alias para observar las estaciones sin municipio y vuelve a activarlos.
    Pulsa **Revelar** para ver la multiplicación de filas y casos.
 5. Antes de editar el TODO 2, la estructura puede estar correcta, pero debe decir
@@ -187,9 +190,11 @@ falte en cualquiera de las tablas cuenta como diferencia. No usar el archivo del
 como sustituto del contrato de ML.
 
 **Dos verificaciones distintas:** `checkpoint_3` comprueba la estructura y las semanas;
-`aggregation_ok` comprueba los valores de lluvia y estaciones. El resumen marca completo
-el TODO 2 solo cuando pasa la segunda comprobación. Una suma de estaciones incorrecta
-puede tener llaves únicas y debe seguir apareciendo pendiente.
+`aggregation_ok` comprueba los valores de lluvia y estaciones. El resumen de la sección 8
+se ve desde el inicio y marca completo el TODO 2 solo cuando pasan las dos comprobaciones.
+Una suma de estaciones incorrecta puede tener llaves únicas y debe seguir apareciendo
+pendiente. Si los alias están desactivados, el aviso del TODO 2 pide activarlos antes de
+revisar el cálculo, y el detalle muestra las semanas que difieren de la tabla oficial.
 
 Confirmar con quien dicta ML el [diccionario](diccionario_de_datos.md), la llave
 `territorial_entity` + `epi_year` + `epi_week`, los casos semanales frente a los acumulados

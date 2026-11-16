@@ -703,70 +703,90 @@ def _():
 @app.cell(hide_code=True)
 def _(bronze_sivigila, con, notification_date_format):
     mo.stop(bronze_sivigila is None)
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE silver.cases AS
-        SELECT
-            cod_dpto_o AS original_department_code,
-            -- The INS files already include leading zeros ('08', '001'). lpad is a safeguard
-            -- for exports that lose them, for example after saving the file from Excel.
-            lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,
-            coalesce(
-                CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
-                try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
-            ) AS notification_date,
-            CAST(ano AS INTEGER) AS epi_year,
-            CAST(semana AS INTEGER) AS epi_week,
-            cod_eve AS event_code,
-            ajuste AS adjustment
-        FROM bronze.sivigila
-        """,
-        [notification_date_format],
-    ).fetchall()
-    cases_by_department = con.sql(
-        """
-        SELECT
-            c.original_department_code,
-            count(*) AS cases,
-            count(d.cod_mpio) AS with_valid_municipality,
-            round(100 * count(d.cod_mpio) / count(*), 1) AS matched_pct,
-            count(c.notification_date) AS with_valid_date,
-            round(100 * count(c.notification_date) / count(*), 1) AS date_pct
-        FROM silver.cases AS c
-        LEFT JOIN bronze.divipola AS d ON c.municipality_code = d.cod_mpio
-        GROUP BY ALL ORDER BY 1
-        """
-    ).pl()
+    try:
+        con.execute(
+            """
+            CREATE OR REPLACE TABLE silver.cases AS
+            SELECT
+                cod_dpto_o AS original_department_code,
+                -- The INS files already include leading zeros ('08', '001'). lpad is a safeguard
+                -- for exports that lose them, for example after saving the file from Excel.
+                lpad(cod_dpto_o, 2, '0') || lpad(cod_mun_o, 3, '0') AS municipality_code,
+                coalesce(
+                    CAST(try_strptime(split_part(trim(fec_not), ' ', 1), ?) AS DATE),
+                    try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)
+                ) AS notification_date,
+                CAST(ano AS INTEGER) AS epi_year,
+                CAST(semana AS INTEGER) AS epi_week,
+                cod_eve AS event_code,
+                ajuste AS adjustment
+            FROM bronze.sivigila
+            """,
+            [notification_date_format],
+        ).fetchall()
+    except duckdb.Error as _error:
+        # An unknown format code (%D, a lone %) raises instead of returning NULL. The
+        # checkpoint below turns it into a TODO 1 hint instead of a traceback.
+        date_format_error = str(_error).splitlines()[0]
+        cases_by_department = None
+    else:
+        date_format_error = None
+        cases_by_department = con.sql(
+            """
+            SELECT
+                c.original_department_code,
+                count(*) AS cases,
+                count(d.cod_mpio) AS with_valid_municipality,
+                round(100 * count(d.cod_mpio) / count(*), 1) AS matched_pct,
+                count(c.notification_date) AS with_valid_date,
+                round(100 * count(c.notification_date) / count(*), 1) AS date_pct
+            FROM silver.cases AS c
+            LEFT JOIN bronze.divipola AS d ON c.municipality_code = d.cod_mpio
+            GROUP BY ALL ORDER BY 1
+            """
+        ).pl()
     cases_by_department
-    return (cases_by_department,)
+    return cases_by_department, date_format_error
 
 
 @app.cell(hide_code=True)
-def _(cases_by_department, con):
+def _(cases_by_department, con, date_format_error, notification_date_format):
     _complete = bool(
-        not cases_by_department.is_empty()
+        cases_by_department is not None
+        and not cases_by_department.is_empty()
         and (cases_by_department["with_valid_municipality"] == cases_by_department["cases"]).all()
         and (cases_by_department["with_valid_date"] == cases_by_department["cases"]).all()
     )
-    # A non-NULL value is not enough: the column must be a date, and each date must fall
-    # in the reported year of its case (or the year next to it, at the year boundaries).
-    _type = con.sql("SELECT typeof(notification_date) FROM silver.cases LIMIT 1").fetchall()
-    _date_type = _type[0][0] if _type else None
+    # A non-NULL value is not enough: the column must be a date, and each date must fit the
+    # week the case was reported in (ano, semana). In the INS files a notification is never
+    # earlier than that week, while a wrong format code such as %M (minutes) moves every
+    # date to January.
+    _date_type = None
+    _out_of_range = 0
+    if _complete:
+        _type = con.sql("SELECT typeof(notification_date) FROM silver.cases LIMIT 1").fetchall()
+        _date_type = _type[0][0] if _type else None
     _is_date = _date_type is not None and _date_type.startswith(("DATE", "TIMESTAMP"))
-    _out_of_range = (
-        con.sql(
+    if _is_date:
+        _out_of_range = con.sql(
             """
             SELECT count(*) FROM silver.cases
-            WHERE abs(year(notification_date) - epi_year) > 1
+            WHERE CAST(notification_date AS DATE)
+                    < make_date(epi_year, 1, 4) - CAST(dayofweek(make_date(epi_year, 1, 4)) AS INTEGER)
+                      + CAST(7 * (epi_week - 1) AS INTEGER)
+               OR abs(year(notification_date) - epi_year) > 1
             """
         ).fetchall()[0][0]
-        if _is_date
-        else 0
-    )
     checkpoint_2 = _complete and _is_date and _out_of_range == 0
     if checkpoint_2:
         _message = (
             "✅ **TODO 1 completo:** el 100 % de los casos tiene municipio y fecha de notificación."
+        )
+    elif date_format_error is not None:
+        _message = (
+            f'❌ **TODO 1 pendiente:** DuckDB no reconoce el formato `"{notification_date_format}"`. '
+            "Usa solo códigos de `strptime` como `%d`, `%m` y `%Y`, separados como en la fuente "
+            f"(`2/12/2024`).\n\nDetalle de DuckDB: `{date_format_error}`"
         )
     elif not _complete:
         _message = (
@@ -781,8 +801,10 @@ def _(cases_by_department, con):
         )
     else:
         _message = (
-            f"❌ **TODO 1 pendiente:** hay **{_out_of_range:,} fechas** que no caen en el año "
-            "del caso (`ano`) ni en el año vecino. ¿De dónde sale esa fecha? Revisa el TODO 1."
+            f"❌ **TODO 1 pendiente:** hay **{_out_of_range:,} fechas** que no cuadran con la "
+            "semana del caso (`ano`, `semana`): una notificación no puede ser anterior a esa "
+            "semana ni caer en otro año. ¿Qué código representa el **mes** en `2/12/2024`? "
+            "Revisa el TODO 1."
         )
     mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger")
     return (checkpoint_2,)
@@ -1136,14 +1158,14 @@ def _(con, entity_rainfall_ready):
             FROM silver.entity_daily_rainfall
             GROUP BY ALL
         )
-        -- ...then average the stations within each territorial entity.
+        -- ...then combine the station totals of each territorial entity and week.
         SELECT territorial_entity, epi_year, epi_week,
                round(sum(mm), 2) AS mean_precipitation_mm,  -- TODO 2: combine station totals.
                count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
         """
-    )
+    ).fetchall()
     weekly_rainfall_ready = True
     return (weekly_rainfall_ready,)
 
@@ -1300,23 +1322,10 @@ def _(con, gold):
 
 
 @app.cell(hide_code=True)
-def _(checkpoint_3, final_gold, gold, missing_municipalities):
-    mo.stop(not checkpoint_3)
-    _mine = gold.group_by("territorial_entity").agg(
-        student_cases=pl.col("sivigila_cases").sum(),
-        student_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
-        student_stations=pl.col("stations_with_data").max(),
-    )
-    _repo = final_gold.group_by("territorial_entity").agg(
-        repo_cases=pl.col("sivigila_cases").sum(),
-        repo_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
-        repo_stations=pl.col("stations_with_data").max(),
-    )
-    # A full join keeps entities that are missing from either table, so they count as differences.
-    _comparison = _mine.join(_repo, on="territorial_entity", how="full", coalesce=True).sort(
-        "territorial_entity"
-    )
+def _(final_gold, gold):
     # Validate every entity-week, not just entity summaries that can hide offsetting errors.
+    # This cell does not wait for the structure check, so the summary in section 8 always
+    # gets a TODO 2 status; the next cell shows the comparison once the structure is right.
     _keys = ["territorial_entity", "epi_year", "epi_week"]
     _pairs = {
         "cases": "sivigila_cases",
@@ -1333,14 +1342,54 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
     _present = _weekly["student_present"].fill_null(False) & _weekly["repo_present"].fill_null(
         False
     )
-    gold_mismatches = [
-        _name
+    _differs = {
+        _name: ~(_present & _weekly[_column].eq_missing(_weekly[f"{_column}_repo"]))
         for _name, _column in _pairs.items()
-        if not (_present & _weekly[_column].eq_missing(_weekly[f"{_column}_repo"])).all()
-    ]
+    }
+    gold_mismatches = [_name for _name, _rows in _differs.items() if _rows.any()]
     gold_matches_repo = not gold_mismatches
     cases_match = "cases" not in gold_mismatches
     aggregation_ok = "stations" not in gold_mismatches and "rainfall" not in gold_mismatches
+    # Keep only the entity-weeks and columns that differ, next to the repository values.
+    _mask = pl.repeat(False, _weekly.height, eager=True)
+    _shown = []
+    for _name in gold_mismatches:
+        _mask = _mask | _differs[_name]
+        _column = _pairs[_name]
+        _shown += [
+            pl.col(_column).alias(f"student_{_column}"),
+            pl.col(f"{_column}_repo").alias(f"repo_{_column}"),
+        ]
+    gold_differences = _weekly.filter(_mask).select(*_keys, *_shown).sort(_keys)
+    return aggregation_ok, cases_match, gold_differences, gold_matches_repo, gold_mismatches
+
+
+@app.cell(hide_code=True)
+def _(
+    aggregation_ok,
+    checkpoint_3,
+    final_gold,
+    gold,
+    gold_differences,
+    gold_matches_repo,
+    gold_mismatches,
+    missing_municipalities,
+):
+    mo.stop(not checkpoint_3)
+    _mine = gold.group_by("territorial_entity").agg(
+        student_cases=pl.col("sivigila_cases").sum(),
+        student_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        student_stations=pl.col("stations_with_data").max(),
+    )
+    _repo = final_gold.group_by("territorial_entity").agg(
+        repo_cases=pl.col("sivigila_cases").sum(),
+        repo_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        repo_stations=pl.col("stations_with_data").max(),
+    )
+    # A full join keeps entities that are missing from either table, so they count as differences.
+    _comparison = _mine.join(_repo, on="territorial_entity", how="full", coalesce=True).sort(
+        "territorial_entity"
+    )
     _hints = {
         "cases": "**Casos:** hay diferencias en `sivigila_cases` por entidad y semana. Los TODOs no "
         "cambian los casos: ¿estás usando otro archivo de SIVIGILA, como la muestra sintética?",
@@ -1350,52 +1399,73 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
         "repositorio suma la lluvia de la semana en cada estación y luego promedia las "
         "estaciones de la entidad (mm por semana). ¿Qué calculaste tú?",
     }
-    if gold_matches_repo:
-        _feedback = mo.callout(
-            mo.md(
-                "✅ **¿Coincide con la tabla del inicio? Sí:** casos, estaciones y lluvia "
-                "coinciden en cada entidad y semana. La tabla de abajo resume por entidad."
-            ),
+    _aliases_off = not missing_municipalities.is_empty()
+    if aggregation_ok:
+        _status = mo.callout(
+            mo.md("✅ **TODO 2 completo:** lluvia y estaciones coinciden por entidad y semana."),
             kind="success",
         )
-    elif not missing_municipalities.is_empty():
+    elif _aliases_off:
+        # Without the aliases, Cali's stations never reach gold, so the comparison fails
+        # whatever the aggregation is: point at the switch, not at the calculation.
         _unmatched = ", ".join(
             f"`{_name}`"
             for _name in missing_municipalities["municipality"].unique(maintain_order=True)
         )
-        _feedback = mo.callout(
+        _status = mo.callout(
             mo.md(
-                "⚠️ **¿Coincide con la tabla del inicio? Todavía no:** hay estaciones del IDEAM "
-                f"sin municipio ({_unmatched}), así que su lluvia no llega a la tabla oro. "
-                "Vuelve a la **sección 5** y activa el interruptor **Usar la tabla de alias "
-                "(CALI → SANTIAGO DE CALI)**."
+                "⏳ **TODO 2 pendiente:** antes de revisar tu cálculo, vuelve a la "
+                "**sección 5** y activa el interruptor **Usar la tabla de alias "
+                f"(CALI → SANTIAGO DE CALI)**. Hay estaciones del IDEAM sin municipio "
+                f"({_unmatched}), así que su lluvia no llega a la tabla oro y la "
+                "comparación todavía no dice nada sobre tu agregación."
             ),
             kind="warn",
         )
     else:
-        _feedback = mo.callout(
+        _status = mo.callout(
             mo.md(
-                "💡 **Hay diferencias de valores:** tener una fila por entidad y semana "
-                "no garantiza el cálculo correcto. Revisa estas columnas:\n\n"
-                + "\n".join(f"* {_hints[_name]}" for _name in gold_mismatches)
+                "⏳ **TODO 2 pendiente:** revisa el cálculo y el detalle de abajo. "
+                "La ayuda incluye una solución para continuar."
             ),
-            kind="info",
+            kind="warn",
         )
+    if gold_matches_repo:
+        _detail = [
+            mo.callout(
+                mo.md(
+                    "✅ **¿Coincide con la tabla del inicio? Sí:** casos, estaciones y lluvia "
+                    "coinciden en cada entidad y semana. La tabla de abajo resume por entidad."
+                ),
+                kind="success",
+            ),
+            _comparison,
+        ]
+    else:
+        _shown_hints = [_name for _name in gold_mismatches if not _aliases_off or _name == "cases"]
+        _detail = [
+            mo.callout(
+                mo.md(
+                    "💡 **Hay diferencias de valores:** tener una fila por entidad y semana "
+                    "no garantiza el cálculo correcto. Revisa estas columnas:\n\n"
+                    + "\n".join(f"* {_hints[_name]}" for _name in _shown_hints)
+                ),
+                kind="info",
+            )
+            if _shown_hints
+            else None,
+            mo.md(
+                f"**{gold_differences.height:,} combinaciones de entidad y semana** no coinciden "
+                "con la tabla del repositorio (`student_…` es tu valor; `repo_…`, el esperado):"
+            ),
+            gold_differences,
+        ]
     _buffer = io.BytesIO()
     gold.write_parquet(_buffer)
     mo.vstack(
         [
-            mo.callout(
-                mo.md(
-                    "✅ **TODO 2 completo:** lluvia y estaciones coinciden por entidad y semana."
-                    if aggregation_ok
-                    else "⏳ **TODO 2 pendiente:** revisa el cálculo y el detalle de abajo. "
-                    "La ayuda incluye una solución para continuar."
-                ),
-                kind="success" if aggregation_ok else "warn",
-            ),
-            _feedback,
-            _comparison,
+            _status,
+            *(_item for _item in _detail if _item is not None),
             mo.download(
                 data=_buffer.getvalue(),
                 filename="mi_weekly_dengue_signal.parquet",
@@ -1403,7 +1473,7 @@ def _(checkpoint_3, final_gold, gold, missing_municipalities):
             ),
         ]
     )
-    return aggregation_ok, cases_match, gold_matches_repo, gold_mismatches
+    return
 
 
 @app.cell(hide_code=True)
@@ -1589,19 +1659,34 @@ def _(checkpoint_3, gold, lag, missing_municipalities):
     return
 
 
-@app.cell(hide_code=True)
-def _(aggregation_ok, checkpoint_2):
-    _status = [
-        {"step": "TODO 1 · formato de fechas", "ok": checkpoint_2},
-        {"step": "TODO 2 · agregación semanal correcta", "ok": aggregation_ok},
-    ]
-    mo.md(
+@app.function(hide_code=True)
+def progress_summary(todo1_ok: bool, todo2_ok: bool) -> mo.Html:
+    """Render the closing summary with the status of both exercises."""
+    _steps = {
+        "TODO 1 · formato de fechas": todo1_ok,
+        "TODO 2 · agregación semanal correcta": todo2_ok,
+    }
+    return mo.md(
         "## 8 · Resumen\n\n"
-        + "\n".join(f"* {'✅' if e['ok'] else '⏳'} {e['step']}" for e in _status)
+        + "\n".join(f"* {'✅' if _ok else '⏳'} {_step}" for _step, _ok in _steps.items())
         + "\n\n**¿Y ahora?** En la hackathon vas a escalar este piloto: todos los "
         "departamentos, todos los boletines, más variables de clima, y responder las "
         "incógnitas. Empieza por `RETOS.md` y por `uv run dengue-pipeline --help`."
     )
+
+
+@app.cell(hide_code=True)
+def _(checkpoint_2):
+    # Every cell after TODO 1 waits for it, the next summary cell included, so this cell
+    # shows the progress until TODO 1 passes.
+    mo.stop(checkpoint_2)
+    progress_summary(todo1_ok=False, todo2_ok=False)
+    return
+
+
+@app.cell(hide_code=True)
+def _(aggregation_ok, checkpoint_2, checkpoint_3):
+    progress_summary(todo1_ok=checkpoint_2, todo2_ok=checkpoint_3 and aggregation_ok)
     return
 
 
