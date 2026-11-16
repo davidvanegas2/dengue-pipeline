@@ -674,21 +674,49 @@ def _(bronze_sivigila, con):
 
 
 @app.cell(hide_code=True)
-def _(cases_by_department):
-    checkpoint_2 = bool(
+def _(cases_by_department, con):
+    _complete = bool(
         not cases_by_department.is_empty()
         and (cases_by_department["with_valid_municipality"] == cases_by_department["cases"]).all()
         and (cases_by_department["with_valid_date"] == cases_by_department["cases"]).all()
     )
-    mo.callout(
-        mo.md(
-            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
-            if checkpoint_2
-            else "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
-            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
-        ),
-        kind="success" if checkpoint_2 else "danger",
+    # A non-NULL value is not enough: the column must be a date, and each date must fall
+    # in the reported year of its case (or the year next to it, at the year boundaries).
+    _type = con.sql("SELECT typeof(notification_date) FROM silver.cases LIMIT 1").fetchall()
+    _date_type = _type[0][0] if _type else None
+    _is_date = _date_type is not None and _date_type.startswith(("DATE", "TIMESTAMP"))
+    _out_of_range = (
+        con.sql(
+            """
+            SELECT count(*) FROM silver.cases
+            WHERE abs(year(notification_date) - epi_year) > 1
+            """
+        ).fetchall()[0][0]
+        if _is_date
+        else 0
     )
+    checkpoint_2 = _complete and _is_date and _out_of_range == 0
+    if checkpoint_2:
+        _message = (
+            "✅ **Checkpoint 2:** el 100 % de los casos tiene municipio y fecha de notificación."
+        )
+    elif not _complete:
+        _message = (
+            "❌ **Checkpoint 2:** hay casos sin municipio o fecha de notificación. "
+            "Revisa los conteos exactos de la tabla y el TODO 3: los porcentajes están redondeados."
+        )
+    elif not _is_date:
+        _message = (
+            f"❌ **Checkpoint 2:** `notification_date` no está vacía, pero sigue siendo "
+            f"**texto** (`{_date_type}`), no una fecha. Conviértela en el TODO 3 con "
+            "`try_strptime`."
+        )
+    else:
+        _message = (
+            f"❌ **Checkpoint 2:** hay **{_out_of_range:,} fechas** que no caen en el año "
+            "del caso (`ano`) ni en el año vecino. ¿De dónde sale esa fecha? Revisa el TODO 3."
+        )
+    mo.callout(mo.md(_message), kind="success" if checkpoint_2 else "danger")
     return (checkpoint_2,)
 
 

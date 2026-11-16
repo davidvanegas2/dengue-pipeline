@@ -508,3 +508,41 @@ def test_checkpoint_1_validates_both_bulletins(
     assert definitions["bulletin_table"].height == 39  # the selected week reads fine
     assert definitions["checkpoint_1"] is False
     assert "bronze_bulletin" not in definitions
+
+
+@pytest.mark.parametrize(
+    "wrong_answer",
+    [
+        "fec_not AS notification_date,",  # still text: nothing was parsed
+        "split_part(fec_not, ' ', 1) AS notification_date,",  # date part, still text
+        "coalesce(try_cast(fec_not AS DATE), current_date) AS notification_date,",  # made up
+    ],
+)
+def test_checkpoint_2_requires_real_dates(
+    wrong_answer: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2"],
+        [("try_cast(fec_not AS DATE) AS notification_date,", wrong_answer)],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_2"] is False, status(definitions)
+
+
+def test_checkpoint_2_accepts_a_timestamp_solution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hint in the text (split_part + try_strptime, without CAST) is a valid answer."""
+    notebook = _student_with_edits(
+        tmp_path,
+        ["todo1", "todo2"],
+        [
+            (
+                "try_cast(fec_not AS DATE) AS notification_date,",
+                "try_strptime(split_part(fec_not, ' ', 1), '%d/%m/%Y') AS notification_date,",
+            )
+        ],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_2"] is True, status(definitions)
