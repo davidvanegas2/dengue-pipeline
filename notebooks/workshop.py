@@ -3,7 +3,7 @@
 # dependencies = [
 #     "altair>=5.4",
 #     "duckdb>=1.4",
-#     "marimo",
+#     "marimo>=0.25.2",
 #     "pdfplumber>=0.11",
 #     "polars>=1.30",
 #     "pyarrow>=18",
@@ -231,8 +231,8 @@ def _():
 
 
 @app.cell
-def _(path):
-    mo.pdf(src=path("bulletin_26"), initial_page=3, height="55vh")
+def _(path, bulletin_week, bulletin_page):
+    mo.pdf(src=path(bulletin_week.value), initial_page=bulletin_page, height="55vh")
     return
 
 
@@ -262,14 +262,14 @@ def _(path, bulletin_week):
                 return _number, _page, _matches[0]
         raise ValueError(f"Could not find the dengue table in {pdf_path.name}")
 
-    _number, page, title = find_table(path(bulletin_week.value))
+    bulletin_page, page, title = find_table(path(bulletin_week.value))
     _side = "izquierdo" if title["x0"] < page.width / 2 else "derecho"
     mo.md(
-        f"La tabla está en la **página {_number}** del PDF. Su título empieza en "
+        f"La tabla está en la **página {bulletin_page}** del PDF. Su título empieza en "
         f"x = {title['x0']:.0f} de {page.width:.0f} puntos → lado **{_side}**. "
         "Cambia de semana arriba y mira qué pasa. 🔍"
     )
-    return find_table, page, title
+    return bulletin_page, find_table, page, title
 
 
 @app.cell
@@ -1014,7 +1014,7 @@ def _(gold):
 
 
 @app.cell
-def _(checkpoint_3, gold, final_gold):
+def _(checkpoint_3, gold, final_gold, path):
     mo.stop(not checkpoint_3)
     _mine = gold.group_by("territorial_entity").agg(student_cases=pl.col("sivigila_cases").sum())
     _repo = final_gold.group_by("territorial_entity").agg(repo_cases=pl.col("sivigila_cases").sum())
@@ -1022,21 +1022,33 @@ def _(checkpoint_3, gold, final_gold):
     _equal = (_comparison["student_cases"] == _comparison["repo_cases"]).all()
     _filename = io.BytesIO()
     gold.write_parquet(_filename)
+    ml_export = path("gold").read_bytes()
     mo.vstack(
         [
             mo.md(
-                "**¿Coincide con la tabla del inicio?** "
+                "**¿Coinciden los conteos de casos con la tabla del inicio?** "
                 + ("Sí ✅" if _equal else "No del todo 🤔")
             ),
             _comparison,
             mo.download(
                 data=_filename.getvalue(),
                 filename="mi_weekly_dengue_signal.parquet",
-                label="⬇️ Descargar mi tabla oro (para el taller de ML)",
+                label="⬇️ Descargar mi tabla del ejercicio",
+            ),
+            mo.md(
+                "**Para el taller de ML, usa la tabla oficial de abajo.** La tabla del "
+                "ejercicio tiene menos columnas y su lluvia depende de tu solución al "
+                "TODO 4. La oficial conserva las 13 columnas del diccionario de datos "
+                "y suma la lluvia semanal por estación antes de promediar estaciones."
+            ),
+            mo.download(
+                data=ml_export,
+                filename="weekly_dengue_signal.parquet",
+                label="⬇️ Descargar tabla oficial para ML",
             ),
         ]
     )
-    return
+    return (ml_export,)
 
 
 @app.cell(hide_code=True)

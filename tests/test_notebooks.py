@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import marimo as mo
 import polars as pl
 import pytest
 
@@ -102,6 +103,10 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     definitions = run_notebook(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].height == 750
+    assert (
+        definitions["ml_export"]
+        == (ROOT / "data" / "gold" / "weekly_dengue_signal.parquet").read_bytes()
+    )
     assert (
         definitions["missing_municipalities"].height == 2
     )  # CALI and BUGA, until aliases are enabled
@@ -206,6 +211,39 @@ def _modified_facilitator(tmp_path: Path, replacements: list[tuple[str, str]]) -
     path = tmp_path / "modified_facilitator.py"
     path.write_text(code, encoding="utf-8")
     return path
+
+
+@pytest.mark.parametrize(
+    ("selection", "filename", "page_number"),
+    [
+        ("Semana 26 (28 jun – 4 jul 2026)", "extracto_bes_2026_s26.pdf", 3),
+        ("Semana 27 (5 – 11 jul 2026)", "extracto_bes_2026_s27.pdf", 3),
+    ],
+)
+def test_pdf_preview_follows_bulletin_selection(
+    selection: str,
+    filename: str,
+    page_number: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    original_pdf = mo.pdf
+
+    def capture_pdf(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return original_pdf(**kwargs)
+
+    monkeypatch.setattr(mo, "pdf", capture_pdf)
+    notebook = _modified_facilitator(
+        tmp_path,
+        [('value="Semana 26 (28 jun – 4 jul 2026)"', f'value="{selection}"')],
+    )
+    definitions = run_notebook(notebook, monkeypatch)
+    assert definitions["checkpoint_1"] is True
+    assert len(calls) == 1
+    assert calls[0]["src"].name == filename
+    assert calls[0]["initial_page"] == page_number
 
 
 def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
