@@ -50,11 +50,11 @@ SOLUTIONS: dict[str, list[tuple[str, str]]] = {
     ],
     "todo4": [
         (
-            "precipitation_mm AS rainfall_mm,\n"
-            "               1 AS stations\n"
+            "precipitation_mm AS mean_precipitation_mm,\n"
+            "               1 AS stations_with_data\n"
             "        FROM silver.entity_daily_rainfall",
-            "avg(precipitation_mm) AS rainfall_mm,\n"
-            "               count(DISTINCT station_code) AS stations\n"
+            "avg(precipitation_mm) AS mean_precipitation_mm,\n"
+            "               count(DISTINCT station_code) AS stations_with_data\n"
             "        FROM silver.entity_daily_rainfall\n"
             "        GROUP BY ALL",
         )
@@ -102,9 +102,11 @@ def test_facilitator_passes_all_checkpoints(monkeypatch: pytest.MonkeyPatch) -> 
     definitions = run_notebook(ROOT / "notebooks" / "workshop_facilitator.py", monkeypatch)
     assert status(definitions) == dict.fromkeys(CHECKPOINTS, True)
     assert definitions["gold"].height == 750
+    assert definitions["gold"].columns == definitions["final_gold"].columns
     assert (
         definitions["missing_municipalities"].height == 2
     )  # CALI and BUGA, until aliases are enabled
+    assert definitions["gold_matches_repo"] is False  # Cali has no rainfall until aliases are on
 
 
 @pytest.mark.parametrize("variant", ["facilitator", "student"])
@@ -220,6 +222,7 @@ def test_reveal_button_and_aliases_enabled(tmp_path: Path, monkeypatch: pytest.M
     definitions = run_notebook(path, monkeypatch)
     assert definitions["missing_municipalities"].is_empty()  # aliases allow Cali to match
     assert definitions["checkpoint_3"] is True
+    assert definitions["gold_matches_repo"] is True
 
 
 @pytest.mark.network
@@ -237,7 +240,9 @@ def test_student_notebook_has_no_solutions() -> None:
     student = (ROOT / "notebooks" / "workshop.py").read_text(encoding="utf-8")
     assert "SOLUTION" not in student
     assert "STUDENT" not in student
+    for todo_number in (1, 2, 3, 4):
+        assert f"💡 Ayuda para el TODO {todo_number}" in student
     assert "within_bbox" not in student.split("💡 Ayuda para el TODO 2")[0]
     facilitator = (ROOT / "notebooks" / "workshop_facilitator.py").read_text(encoding="utf-8")
     assert "try_strptime(split_part(" in facilitator  # the check below is not vacuous
-    assert "try_strptime(split_part(" not in student
+    assert "try_strptime(split_part(" not in student.split("💡 Ayuda para el TODO 3")[0]

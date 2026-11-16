@@ -353,6 +353,22 @@ def _(parse_decimal, parse_integer):
     return (todo1_ok,)
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.accordion(
+        {
+            "💡 Ayuda para el TODO 1": mo.md(
+                "Usa `.replace(viejo, nuevo)` sobre el texto antes de convertirlo:\n\n"
+                "* En `parse_integer`, quita los espacios con "
+                "`int(text.replace(' ', '').replace('\\xa0', ''))`.\n"
+                "* En `parse_decimal`, cambia la coma por punto con "
+                "`float(text.replace(',', '.'))`."
+            )
+        }
+    )
+    return
+
+
 @app.cell
 def _():
     def crop_table(page, title):
@@ -627,6 +643,27 @@ def _(cases_by_department):
     return (checkpoint_2,)
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.accordion(
+        {
+            "💡 Ayuda para el TODO 3": mo.md(
+                "Quédate con la parte antes del espacio y conviértela con el formato "
+                "día/mes/año:\n\n"
+                "```sql\n"
+                "coalesce(\n"
+                "    CAST(try_strptime(split_part(trim(fec_not), ' ', 1), '%d/%m/%Y') AS DATE),\n"
+                "    try_cast(split_part(trim(fec_not), ' ', 1) AS DATE)\n"
+                ") AS notification_date,\n"
+                "```\n\n"
+                "`try_strptime` lee `'2/12/2024'` como 2 de diciembre; `coalesce` conserva "
+                "las fechas ISO (`'2024-12-02'`) cuando se usa la muestra sintética."
+            )
+        }
+    )
+    return
+
+
 @app.cell
 def _(checkpoint_2, con, path):
     mo.stop(not checkpoint_2, mo.md("⏳ *Pasa el checkpoint 2 para seguir.*"))
@@ -647,7 +684,12 @@ def _(checkpoint_2, con, path):
         -- excluding discarded cases (6) and data-entry errors (D). The real INS downloads
         -- contain neither (adjustment is 0, 3, 5 or 7); keep the filter as a safeguard.
         CREATE OR REPLACE TABLE silver.weekly_cases AS
-        SELECT me.territorial_entity, c.epi_year, c.epi_week, count(*) AS cases
+        SELECT
+            me.territorial_entity,
+            c.epi_year,
+            c.epi_week,
+            count(*) AS cases,
+            count(*) FILTER (WHERE c.event_code = '220') AS severe_cases
         FROM silver.cases AS c
         JOIN silver.municipality_entity AS me ON c.municipality_code = me.municipality_code
         WHERE c.event_code IN ('210', '220') AND c.adjustment NOT IN ('6', 'D')
@@ -788,11 +830,14 @@ def _(con, macros_ready, use_aliases):
                    normalize(departamento) AS department,
                    normalize(municipio) AS municipality,
                    CAST(fecha[:10] AS DATE) AS observation_date,
-                   CAST(precipitacion_mm AS DOUBLE) AS precipitation_mm,
+                   CAST(precipitacion_mm AS DECIMAL(14, 4)) AS precipitation_mm,
                    CAST(n_lecturas AS INTEGER) AS reading_count
             FROM bronze.ideam
         )
-        SELECT b.*, d.cod_mpio AS municipality_code
+        SELECT
+            b.*,
+            d.cod_mpio AS municipality_code,
+            (b.reading_count > 144 OR b.precipitation_mm > 300) AS suspicious_reading
         FROM base AS b
         LEFT JOIN bronze.alias AS a
             ON {_use_aliases}
@@ -945,7 +990,8 @@ def _(con, entity_rainfall_ready):
         )
         -- ...then average the stations within each territorial entity.
         SELECT territorial_entity, epi_year, epi_week,
-               round(avg(mm), 1) AS rainfall_mm, count(*) AS stations
+               round(avg(mm), 2) AS mean_precipitation_mm,
+               count(DISTINCT station_code) AS stations_with_data
         FROM per_station
         GROUP BY ALL
         -- <<< SOLUTION
@@ -953,8 +999,8 @@ def _(con, entity_rainfall_ready):
         -- -- ✏️ TODO 4: this returns one row per DAY and station. Aggregate by week.
         -- SELECT territorial_entity,
         --        epi_year(observation_date) AS epi_year, epi_week(observation_date) AS epi_week,
-        --        precipitation_mm AS rainfall_mm,
-        --        1 AS stations
+        --        precipitation_mm AS mean_precipitation_mm,
+        --        1 AS stations_with_data
         -- FROM silver.entity_daily_rainfall
         -- <<< STUDENT
         """
@@ -972,8 +1018,8 @@ def _():
                 "`GROUP BY` las columnas de la llave. Una versión válida:\n\n"
                 "```sql\nSELECT territorial_entity, epi_year(observation_date) AS epi_year,\n"
                 "       epi_week(observation_date) AS epi_week,\n"
-                "       avg(precipitation_mm) AS rainfall_mm,\n"
-                "       count(DISTINCT station_code) AS stations\n"
+                "       avg(precipitation_mm) AS mean_precipitation_mm,\n"
+                "       count(DISTINCT station_code) AS stations_with_data\n"
                 "FROM silver.entity_daily_rainfall\nGROUP BY ALL\n```\n\n"
                 "¿Es lo mismo promediar días que sumar la semana por estación y luego "
                 "promediar estaciones? Discútanlo."
@@ -1000,18 +1046,43 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
         ),
         -- The spine includes every entity-week combination, with or without data.
         spine AS (
-            SELECT e.entidad_territorial AS territorial_entity, s.epi_year, s.epi_week
+            SELECT
+                e.entidad_territorial AS territorial_entity,
+                e.tipo AS entity_type,
+                lpad(e.cod_dpto, 2, '0') AS department_code,
+                s.epi_year,
+                s.epi_week
             FROM bronze.entities AS e CROSS JOIN weeks AS s
+        ),
+        suspicious AS (
+            SELECT
+                territorial_entity,
+                epi_year(observation_date) AS epi_year,
+                epi_week(observation_date) AS epi_week,
+                CAST(count(*) FILTER (WHERE suspicious_reading) AS INTEGER) AS suspicious_days
+            FROM silver.entity_daily_rainfall
+            GROUP BY ALL
         )
         SELECT
-            es.territorial_entity, es.epi_year, es.epi_week,
+            es.territorial_entity,
+            es.entity_type,
+            es.department_code,
+            es.epi_year,
+            es.epi_week,
             make_date(es.epi_year, 1, 4) - CAST(dayofweek(make_date(es.epi_year, 1, 4)) AS INTEGER)
                 + CAST(7 * (es.epi_week - 1) AS INTEGER) AS week_start,
+            b.total_cases AS bulletin_cumulative_cases,
+            l.mean_precipitation_mm,
+            l.stations_with_data,
+            sp.suspicious_days,
             CASE WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN coalesce(c.cases, 0) END
                 AS sivigila_cases,
-            b.total_cases AS bulletin_cumulative_cases,
-            l.rainfall_mm,
-            l.stations
+            CASE WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN coalesce(c.severe_cases, 0) END
+                AS sivigila_severe_cases,
+            CASE
+                WHEN es.epi_year IN (SELECT epi_year FROM silver.cases) THEN 'sivigila'
+                WHEN b.total_cases IS NOT NULL THEN 'bulletin'
+            END AS case_source
         FROM spine AS es
         LEFT JOIN silver.weekly_cases AS c
             ON es.territorial_entity = c.territorial_entity
@@ -1019,10 +1090,13 @@ def _(bronze_bulletin, con, weekly_rainfall_ready):
         LEFT JOIN silver.weekly_rainfall AS l
             ON es.territorial_entity = l.territorial_entity
             AND es.epi_year = l.epi_year AND es.epi_week = l.epi_week
+        LEFT JOIN suspicious AS sp
+            ON es.territorial_entity = sp.territorial_entity
+            AND es.epi_year = sp.epi_year AND es.epi_week = sp.epi_week
         LEFT JOIN bronze.bulletin AS b
             ON es.territorial_entity = b.territorial_entity
             AND es.epi_year = b.epi_year AND es.epi_week = b.epi_week
-        ORDER BY ALL
+        ORDER BY es.territorial_entity, es.epi_year, es.epi_week
         """
     )
     gold = con.sql("SELECT * FROM gold.signal").pl()
@@ -1051,20 +1125,64 @@ def _(gold):
 
 
 @app.cell
-def _(checkpoint_3, gold, final_gold):
+def _(checkpoint_3, final_gold, gold):
     mo.stop(not checkpoint_3)
-    _mine = gold.group_by("territorial_entity").agg(student_cases=pl.col("sivigila_cases").sum())
-    _repo = final_gold.group_by("territorial_entity").agg(repo_cases=pl.col("sivigila_cases").sum())
+    _mine = gold.group_by("territorial_entity").agg(
+        student_cases=pl.col("sivigila_cases").sum(),
+        student_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        student_stations=pl.col("stations_with_data").max(),
+    )
+    _repo = final_gold.group_by("territorial_entity").agg(
+        repo_cases=pl.col("sivigila_cases").sum(),
+        repo_rain_mm=pl.col("mean_precipitation_mm").mean().round(2),
+        repo_stations=pl.col("stations_with_data").max(),
+    )
     _comparison = _mine.join(_repo, on="territorial_entity").sort("territorial_entity")
-    _equal = (_comparison["student_cases"] == _comparison["repo_cases"]).all()
+    _cases_equal = (_comparison["student_cases"] == _comparison["repo_cases"]).all()
+    _cali_has_rain = (
+        gold.filter(pl.col("territorial_entity") == "Santiago de Cali")["mean_precipitation_mm"]
+        .is_not_null()
+        .any()
+    )
+    _rain_equal = bool(
+        _cali_has_rain
+        and (_comparison["student_rain_mm"].fill_null(-1.0) == _comparison["repo_rain_mm"]).all()
+        and (_comparison["student_stations"].fill_null(0) == _comparison["repo_stations"]).all()
+    )
+    gold_matches_repo = bool(_cases_equal and _rain_equal)
+    if not _cali_has_rain:
+        _feedback = mo.callout(
+            mo.md(
+                "⚠️ **¿Coincide con la tabla del inicio? Todavía no:** `Santiago de Cali` quedó "
+                "sin lluvia (`null`) y al `Valle del Cauca` le falta la estación de Buga. "
+                "Vuelve a la **sección 5** y activa el interruptor **Usar la tabla de alias "
+                "(CALI → SANTIAGO DE CALI)**."
+            ),
+            kind="warn",
+        )
+    elif not gold_matches_repo:
+        _feedback = mo.callout(
+            mo.md(
+                "💡 **¿Coincide con la tabla del inicio? Casi:** los casos y las estaciones "
+                "coinciden, pero `student_rain_mm` cambia porque promediaste los días "
+                "directamente en el TODO 4 en vez de sumar la lluvia semanal por estación y "
+                "luego promediar estaciones. Ambas tablas tienen el grano correcto."
+            ),
+            kind="info",
+        )
+    else:
+        _feedback = mo.callout(
+            mo.md(
+                "✅ **¿Coincide con la tabla del inicio? Sí:** casos, estaciones y lluvia "
+                "coinciden."
+            ),
+            kind="success",
+        )
     _filename = io.BytesIO()
     gold.write_parquet(_filename)
     mo.vstack(
         [
-            mo.md(
-                "**¿Coincide con la tabla del inicio?** "
-                + ("Sí ✅" if _equal else "No del todo 🤔")
-            ),
+            _feedback,
             _comparison,
             mo.download(
                 data=_filename.getvalue(),
@@ -1073,7 +1191,7 @@ def _(checkpoint_3, gold, final_gold):
             ),
         ]
     )
-    return
+    return (gold_matches_repo,)
 
 
 @app.cell(hide_code=True)
@@ -1188,7 +1306,9 @@ def _(checkpoint_3, gold, lag):
     _with_lag = (
         gold.sort("territorial_entity", "epi_year", "epi_week")
         .with_columns(
-            earlier_rainfall=pl.col("rainfall_mm").shift(lag.value).over("territorial_entity")
+            earlier_rainfall=pl.col("mean_precipitation_mm")
+            .shift(lag.value)
+            .over("territorial_entity")
         )
         .filter(pl.col("sivigila_cases").is_not_null())
     )
@@ -1197,6 +1317,9 @@ def _(checkpoint_3, gold, lag):
         .agg(correlation=pl.corr("earlier_rainfall", "sivigila_cases").round(2))
         .sort("territorial_entity")
     )
+    _missing_cali = _correlation.filter(
+        (pl.col("territorial_entity") == "Santiago de Cali") & pl.col("correlation").is_null()
+    )
     mo.vstack(
         [
             mo.md(
@@ -1204,6 +1327,20 @@ def _(checkpoint_3, gold, lag):
                 "reproducirse, pero no de un día para otro. Mueve el rezago: ¿con cuántas "
                 f"semanas de diferencia se parecen más la lluvia y los casos? *(Rezago = "
                 f"{lag.value} semanas.)* Esta pregunta es el puente al taller de ML."
+            ),
+            *(
+                [
+                    mo.callout(
+                        mo.md(
+                            "💡 `Santiago de Cali` aparece en `null` porque aún no tiene lluvia. "
+                            "Activa el interruptor de alias en la **sección 5** para calcular su "
+                            "correlación."
+                        ),
+                        kind="warn",
+                    )
+                ]
+                if not _missing_cali.is_empty()
+                else []
             ),
             lag,
             _correlation,
