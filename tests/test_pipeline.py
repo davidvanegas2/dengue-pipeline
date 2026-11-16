@@ -166,7 +166,8 @@ def test_codes_exported_as_float_text_do_not_change_case_counts(
 
     columns_sql = "sum(sivigila_cases), sum(sivigila_severe_cases)"
     expected = duckdb.sql(
-        f"SELECT {columns_sql} FROM '{repo_paths.gold.as_posix()}/weekly_dengue_signal.parquet'"
+        f"SELECT {columns_sql} FROM read_parquet(?)",
+        params=[str(repo_paths.gold / "weekly_dengue_signal.parquet")],
     ).fetchall()
     con = warehouse.connect(tmp_paths.database)
     try:
